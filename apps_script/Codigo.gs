@@ -1,28 +1,41 @@
 /**
- * La voz de la Junta — backend v2 (Junta de Juntas, PND 2026-2030)
+ * La voz de la Junta — backend v3 (Junta de Juntas, PND 2026-2030)
  *
- * Qué cambió frente a la v1, y por qué:
- *  1. El formulario ya no toca la hoja ni toma candados. Guarda el audio y una ficha
- *     en Drive y responde de una. Con 200 personas enviando a la vez, nadie hace fila.
- *  2. Las llamadas a Gemini van en paralelo (UrlFetchApp.fetchAll), no una por una.
- *  3. Dos etapas independientes, cada una con su propia clave (proyectos distintos):
- *       Etapa 1  audio  -> texto      GEMINI_API_KEY
- *       Etapa 2  texto  -> palanca    GEMINI_API_KEY_2, de a 20 respuestas por llamada
- *  4. La hoja se escribe por columnas completas, no celda por celda.
- *  5. (23 sep) La clasificacion usa el mapa de terminos por palanca derivado del
- *     Resumen ejecutivo PND Cartagena-Bolivar v6: cada palanca lleva su definicion
- *     larga y su vocabulario, hay reglas de desempate para las confusiones frecuentes
- *     (sector vs. palanca, agua vs. clima, empleo vs. formacion, reglas vs. brechas),
- *     ocho ejemplos resueltos, y una pista deterministica por palabras clave que se
- *     le pasa a la IA como apoyo — no como respuesta.
- *  6. (24 sep) Candado real (LockService); resultados escritos por id y no por posición;
- *     la saturación de Gemini no gasta intentos; un audio dañado o una respuesta ilegible
- *     de la IA solo afectan a su fila; textos que empiezan por = no se vuelven fórmulas.
+ * Qué hace:
+ *   doPost   recibe cada respuesta del formulario y la deja en la bandeja de Drive (sin tocar la hoja).
+ *   procesarPendientes   corre cada minuto: pasa las fichas a la hoja, transcribe los audios
+ *            (Gemini, clave 1) y ubica cada respuesta en su palanca (Gemini, clave 2).
+ *   doGet    entrega los datos al panel (con la clave del panel) y atiende sus acciones de operador.
  *
- * Montaje: ver README.md. Antes del evento ejecute verificarClaves().
+ * Historia:
+ *  v2  1. El formulario no toca la hoja ni toma candados: guarda en Drive y responde de una.
+ *      2. Llamadas a Gemini en paralelo (UrlFetchApp.fetchAll).
+ *      3. Dos etapas con clave propia (proyectos distintos): audio -> texto, texto -> palanca (de a 20).
+ *      4. La hoja se escribe por columnas completas.
+ *      5. (23 sep) Mapa de términos por palanca del Resumen ejecutivo PND v6, reglas de desempate,
+ *         ejemplos resueltos y pista determinística por palabras clave.
+ *      6. (24 sep) Candado real; resultados escritos por id; la saturación de Gemini no gasta
+ *         intentos; un audio dañado solo afecta a su fila; nada se vuelve fórmula en la hoja.
+ *  v3  (25 sep, madrugada)
+ *      7. El disparador de cada minuto sale en milisegundos cuando no hay trabajo: así no se agota
+ *         el tope diario de ejecución de disparadores de Google (90 min en cuentas personales).
+ *      8. Motor de respaldo: si el disparador deja de correr, el panel puede pedir el proceso
+ *         (doGet accion=procesar). Estado del motor visible en el panel.
+ *      9. Tope de tiempo por modelo: ninguna ejecución se acerca al límite de 6 minutos.
+ *     10. Las filas se arman según el encabezado real de la hoja; las columnas nuevas se agregan
+ *         al final, solas. Nada se corre de lugar aunque alguien agregue una columna.
+ *     11. Una tanda de clasificación que la IA no puede responder se reparte de a una, para que
+ *         una sola respuesta problemática no bloquee a las otras diecinueve.
+ *     12. Notas de voz inaudibles, fichas ilegibles (a cuarentena), envíos repetidos (no duplican
+ *         audios), ocultar/validada escritos a mano de cualquier forma.
+ *     13. Funciones de operación: diagnostico(), procesarAhora(), archivarEnsayo(),
+ *         activarMotor(), pausarMotor(), probarTranscripcion(), revisarDuplicados().
+ *
+ * Montaje y operación: ver LEEME_montaje.md y GUIA_DEL_DIA.md.
  */
 
 // ---------- Configuración ----------
+const VERSION = '3.0 (25 sep 2026)';
 const HOJA = 'Voces';
 const SHEET_ID = 'PEGUE_AQUI_EL_ID_DE_SU_HOJA';
 
@@ -34,20 +47,27 @@ const MODELOS_TEXTO = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini
 
 const LOTE_AUDIO = 25;   // transcripciones en paralelo por tanda
 const LOTE_TEXTO = 20;   // respuestas clasificadas en una sola llamada
-const SEG_MAX = 260;     // segundos de trabajo por ejecución (el tope de Apps Script son 360)
+const SEG_MAX = 260;     // segundos de trabajo por ejecución del disparador (el tope de Apps Script son 360)
+const SEG_TOPE = 330;    // pasado este segundo no se empieza ninguna llamada nueva a Gemini
+const SEG_LLAMADA = 65;  // lo que puede tardar, como mucho, una llamada a Gemini
+const SEG_RESPALDO = 45; // segundos de trabajo cuando el proceso lo pide el panel (motor de respaldo)
 const MAX_INTENTOS = 8;  // fallas REALES (audio ilegible, respuesta vacía o inválida) antes de marcar error
 // Gemini saturado (429, 5xx) o un modelo que no existe no es culpa de la respuesta: no gasta
 // intentos. Solo si una misma respuesta lleva TOPE_TRANSITORIOS minutos seguidos fallando así,
 // se cuenta un intento, para que una respuesta que siempre falla no quede en cola para siempre.
 const CODIGOS_TRANSITORIOS = [403, 404, 408, 429, 500, 502, 503, 504];
 const TOPE_TRANSITORIOS = 10;
+const REVISION_COMPLETA_MIN = 10;  // aunque no haya señal de trabajo, cada tanto se revisa todo
+const INAUDIBLE = '(inaudible)';   // lo que devuelve la transcripción cuando no se entiende nada
+const MAX_AUDIO_B64 = 20000000;    // ~15 MB de audio; una nota de 60 s pesa menos de 2 MB
 
 const PARTES = ['vision', 'compromiso'];
 const CAMPOS_PARTE = ['escrita', 'audio_url', 'audio_id', 'transcripcion', 'palanca', 'palanca_2', 'sector', 'resumen', 'confianza', 'palanca_validada'];
 const COLUMNAS = ['id', 'recibido', 'nombre', 'organizacion', 'rol']
   .concat(...PARTES.map(p => CAMPOS_PARTE.map(c => p + '_' + c)))
   .concat(['estado_ia', 'intentos', 'ocultar', 'estado', 'notas_equipo', 'consentimiento'])
-  .concat(PARTES.map(p => p + '_palabras'));  // al final, para no mover las columnas existentes
+  .concat(PARTES.map(p => p + '_palabras'))  // al final, para no mover las columnas existentes
+  .concat(['enviado']);                       // v3: hora del teléfono al enviar (prueba de la autorización)
 
 const PALANCAS = {
   conectividad: 'Conectividad que mueve la produccion y acerca a la gente. Infraestructura y servicios que reducen tiempos y costos de mover carga, personas y datos: aeropuerto Rafael Nunez y Ciudadela Aeroportuaria de Bayunca, aeropuertos regionales, tren regional, doble calzada Cartagena-Barranquilla, corredor de carga Cartagena-Mamonal, vias, acceso al puerto, dragado y canal de acceso, y conectividad digital.',
@@ -106,116 +126,253 @@ const VOCABULARIO = [
 
 // ---------- Montaje ----------
 function configurar() {
+  if (SHEET_ID.indexOf('PEGUE') === 0) throw new Error('Ponga el ID de su hoja en SHEET_ID, en la configuración de arriba, antes de ejecutar configurar().');
   const ss = SpreadsheetApp.openById(SHEET_ID);
   if (ss.getName() !== 'La voz de la Junta') ss.rename('La voz de la Junta');
   let sh = ss.getSheetByName(HOJA);
-  if (!sh) { sh = ss.insertSheet(HOJA); const h1 = ss.getSheetByName('Hoja 1') || ss.getSheetByName('Sheet1'); if (h1) ss.deleteSheet(h1); }
-  sh.getRange(1, 1, 1, COLUMNAS.length).setValues([COLUMNAS]).setFontWeight('bold');
+  if (!sh) {
+    sh = ss.insertSheet(HOJA);
+    const h1 = ss.getSheetByName('Hoja 1') || ss.getSheetByName('Sheet1');
+    if (h1 && h1.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(h1);
+  }
+  const cab = asegurarColumnas_(sh);
+  sh.getRange(1, 1, 1, cab.length).setFontWeight('bold');
   sh.setFrozenRows(1);
   const props = PropertiesService.getScriptProperties();
-  if (!props.getProperty('CARPETA_ID')) props.setProperty('CARPETA_ID', DriveApp.createFolder('La voz de la Junta - audios').getId());
-  if (!props.getProperty('BANDEJA_ID')) props.setProperty('BANDEJA_ID', DriveApp.createFolder('La voz de la Junta - bandeja').getId());
+  if (!carpetaExiste_(props.getProperty('CARPETA_ID'))) props.setProperty('CARPETA_ID', DriveApp.createFolder('La voz de la Junta - audios').getId());
+  if (!carpetaExiste_(props.getProperty('BANDEJA_ID'))) props.setProperty('BANDEJA_ID', DriveApp.createFolder('La voz de la Junta - bandeja').getId());
   if (!props.getProperty('PANEL_TOKEN')) props.setProperty('PANEL_TOKEN', Utilities.getUuid().replace(/-/g, '').slice(0, 24));
-  const col = n => COLUMNAS.indexOf(n) + 1;
-  PARTES.forEach(p => sh.getRange(2, col(p + '_palanca_validada'), 2000, 1).setDataValidation(
-    SpreadsheetApp.newDataValidation().requireValueInList(Object.keys(PALANCAS), true).build()));
-  sh.getRange(2, col('ocultar'), 2000, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
-  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'procesarPendientes').forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('procesarPendientes').timeBased().everyMinutes(1).create();
+  validaciones_(sh, cab);
+  activarMotor();
   Logger.log('Clave del panel: ' + props.getProperty('PANEL_TOKEN'));
   Logger.log('Audios: ' + DriveApp.getFolderById(props.getProperty('CARPETA_ID')).getUrl());
   Logger.log('Bandeja: ' + DriveApp.getFolderById(props.getProperty('BANDEJA_ID')).getUrl());
   if (!props.getProperty(CLAVE_AUDIO) || !props.getProperty(CLAVE_TEXTO)) Logger.log('FALTAN CLAVES: ' + CLAVE_AUDIO + ' y ' + CLAVE_TEXTO);
+  Logger.log('Listo. Ejecute diagnostico() para revisar todo de una vez.');
+}
+
+/** Crea (o vuelve a crear) el disparador de cada minuto. */
+function activarMotor() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'procesarPendientes')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('procesarPendientes').timeBased().everyMinutes(1).create();
+  PropertiesService.getScriptProperties().setProperty('HAY_FICHAS', String(Date.now()));  // fuerza una revisión completa
+  Logger.log('Motor activo: procesarPendientes corre cada minuto.');
+}
+
+/** Quita el disparador. Las respuestas siguen llegando a la bandeja; se procesan al activarlo de nuevo. */
+function pausarMotor() {
+  let n = 0;
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'procesarPendientes')
+    .forEach(t => { ScriptApp.deleteTrigger(t); n++; });
+  Logger.log('Motor en pausa (' + n + ' disparador' + (n === 1 ? '' : 'es') + ' quitado' + (n === 1 ? '' : 's') + '). Para reanudar: activarMotor().');
+}
+
+/** Agrega al final del encabezado las columnas que falten. Nunca mueve ni renombra las existentes. */
+function asegurarColumnas_(sh) {
+  const ancho = Math.max(sh.getLastColumn(), 1);
+  const cab = sh.getRange(1, 1, 1, ancho).getValues()[0].map(x => String(x == null ? '' : x).trim());
+  while (cab.length && !cab[cab.length - 1]) cab.pop();
+  const faltan = COLUMNAS.filter(c => cab.indexOf(c) < 0);
+  if (faltan.length) {
+    const total = cab.length + faltan.length;
+    if (sh.getMaxColumns() < total) sh.insertColumnsAfter(sh.getMaxColumns(), total - sh.getMaxColumns());
+    sh.getRange(1, cab.length + 1, 1, faltan.length).setValues([faltan]).setFontWeight('bold');
+  }
+  return cab.concat(faltan);
+}
+
+/** Garantiza que la hoja tenga al menos `n` filas. */
+function asegurarFilas_(sh, n) {
+  const max = sh.getMaxRows();
+  if (max < n) sh.insertRowsAfter(max, n - max + 50);
+}
+
+function validaciones_(sh, cab) {
+  const filas = 3000;
+  asegurarFilas_(sh, filas + 1);
+  const lista = SpreadsheetApp.newDataValidation().requireValueInList(Object.keys(PALANCAS), true).setAllowInvalid(false).build();
+  PARTES.forEach(p => {
+    const k = cab.indexOf(p + '_palanca_validada');
+    if (k >= 0) sh.getRange(2, k + 1, filas, 1).setDataValidation(lista);
+  });
+  const ko = cab.indexOf('ocultar');
+  if (ko >= 0) sh.getRange(2, ko + 1, filas, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+}
+
+function carpetaExiste_(id) {
+  if (!id) return false;
+  try { return !DriveApp.getFolderById(id).isTrashed(); } catch (x) { return false; }
 }
 
 // ---------- Recepción: sin candado, sin tocar la hoja ----------
 function doPost(e) {
   try {
-    const d = JSON.parse(e.postData.contents);
-    if (!d.id || !d.nombre || !d.organizacion) return json_({ ok: false, error: 'faltan datos' });
-    if (!/^[A-Za-z0-9-]{8,64}$/.test(String(d.id))) return json_({ ok: false, error: 'id inválido' });
+    const d = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    if (!d || !d.id || !d.nombre || !d.organizacion) return json_({ ok: false, error: 'faltan datos' });
+    const id = String(d.id);
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) return json_({ ok: false, error: 'id inválido' });
     if (d.consentimiento !== true) return json_({ ok: false, error: 'sin autorización' });
-    const props = PropertiesService.getScriptProperties();
-    const carpeta = DriveApp.getFolderById(props.getProperty('CARPETA_ID'));
+
+    // Un teléfono que reenvía (porque no alcanzó a ver la respuesta) no duplica nada.
+    const cache = CacheService.getScriptCache();
+    if (cache.get('visto_' + id)) return json_({ ok: true, repetido: true });
+    const P = PropertiesService.getScriptProperties().getProperties();
+    const bandeja = DriveApp.getFolderById(P.BANDEJA_ID);
+    if (bandeja.getFilesByName(id + '.json').hasNext()) return json_({ ok: true, repetido: true });
+
+    const carpeta = DriveApp.getFolderById(P.CARPETA_ID);
     const ficha = {
-      id: String(d.id), nombre: corto_(d.nombre, 120),
-      organizacion: corto_(d.organizacion, 160), rol: corto_(d.rol, 120)
+      id: id, nombre: corto_(d.nombre, 120).trim(),
+      organizacion: corto_(d.organizacion, 160).trim(), rol: corto_(d.rol, 120).trim(),
+      enviado: corto_(d.cliente, 40)
     };
     PARTES.forEach(p => {
-      const r = d[p] || {};
-      ficha[p + '_escrita'] = corto_(r.texto, 3000);
-      if (r.audio && r.audio.base64) {
-        const mime = String(r.audio.mime || 'audio/webm').split(';')[0];
-        const ext = /mp4|m4a|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
-        const nombre = [p, limpiar_(d.organizacion), limpiar_(d.nombre), String(d.id).slice(0, 8)].join('_') + '.' + ext;
-        const archivo = carpeta.createFile(Utilities.newBlob(Utilities.base64Decode(r.audio.base64), mime, nombre));
-        ficha[p + '_audio_url'] = archivo.getUrl();
-        ficha[p + '_audio_id'] = archivo.getId();
-      }
+      const r = (d[p] && typeof d[p] === 'object') ? d[p] : {};
+      ficha[p + '_escrita'] = corto_(r.texto, 3000).trim();
+      const a = r.audio;
+      if (!a || typeof a.base64 !== 'string' || a.base64.length < 100 || a.base64.length > MAX_AUDIO_B64) return;
+      let bytes;
+      try { bytes = Utilities.base64Decode(a.base64); } catch (x) { return; }  // audio dañado: se queda el texto, si hay
+      const mime = mimeAudio_(a.mime, '');
+      const ext = { 'audio/mp4': 'm4a', 'audio/ogg': 'ogg', 'audio/aac': 'aac', 'audio/mp3': 'mp3', 'audio/wav': 'wav' }[mime] || 'webm';
+      const nombre = [p, limpiar_(d.organizacion), limpiar_(d.nombre), id.slice(0, 8)].join('_') + '.' + ext;
+      const archivo = carpeta.createFile(Utilities.newBlob(bytes, mime, nombre));
+      ficha[p + '_audio_url'] = archivo.getUrl();
+      ficha[p + '_audio_id'] = archivo.getId();
     });
-    DriveApp.getFolderById(props.getProperty('BANDEJA_ID'))
-      .createFile(String(d.id) + '.json', JSON.stringify(ficha), 'application/json');
+    bandeja.createFile(id + '.json', JSON.stringify(ficha), 'application/json');
+    try { cache.put('visto_' + id, '1', 21600); } catch (x) {}
+    try { PropertiesService.getScriptProperties().setProperty('HAY_FICHAS', String(Date.now())); } catch (x) {}
     return json_({ ok: true });
   } catch (err) {
-    return json_({ ok: false, error: String(err) });
+    return json_({ ok: false, error: String((err && err.message) || err) });
   }
 }
 
-// ---------- Proceso de cada minuto ----------
-function procesarPendientes() {
-  // Candado real: si la ejecución anterior sigue trabajando, esta no arranca.
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return;
+// ---------- El motor ----------
+/** Lo corre el disparador cada minuto. Sale en milisegundos cuando no hay nada que hacer. */
+function procesarPendientes() { procesar_({ seg: SEG_MAX, origen: 'disparador' }); }
+
+/** Para correr a mano desde el editor: procesa ya, haya o no señal de trabajo. */
+function procesarAhora() {
+  const r = procesar_({ seg: SEG_MAX, origen: 'manual', forzar: true });
+  Logger.log(JSON.stringify(r));
+}
+
+function procesar_(op) {
   const t0 = Date.now();
-  // audio/texto: la etapa sigue activa en esta ejecución. fallaron: respuestas que ya
-  // fallaron en esta ejecución; se reintentan en la siguiente, no en la misma vuelta.
-  const estado = { audio: true, texto: true, fallaron: {} };
+  const props = PropertiesService.getScriptProperties();
+  const P = props.getProperties();
+  // El latido le dice al panel que el disparador está vivo; solo lo marca el disparador.
+  if (op.origen === 'disparador') { try { props.setProperty('LATIDO', String(t0)); } catch (x) {} }
+  const hayFichas = !!P.HAY_FICHAS;
+  const pendientes = Number(P.PENDIENTES || 0);
+  const toca = t0 - Number(P.ULTIMA_REVISION || 0) > REVISION_COMPLETA_MIN * 60000;
+  if (!op.forzar && !hayFichas && !(pendientes > 0) && !toca) return { hecho: false, motivo: 'sin trabajo' };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(op.origen === 'panel' ? 100 : 1000)) return { hecho: false, motivo: 'otro proceso está trabajando' };
+  const ctx = {
+    t0: t0, fin: t0 + op.seg * 1000,
+    tope: t0 + Math.min(SEG_TOPE, op.seg + SEG_LLAMADA + 15) * 1000,
+    audio: true, texto: true, fallaron: {}, cab: null, bandeja: -1
+  };
+  const n = { ingresadas: 0, transcritas: 0, clasificadas: 0 };
   try {
-    ingresarFichas_();
-    while ((Date.now() - t0) / 1000 < SEG_MAX) {
-      const a = estado.audio ? transcribirTanda_(estado) : 0;
-      const b = estado.texto ? clasificarTanda_(estado) : 0;
+    ctx.cab = asegurarColumnas_(hoja_());
+    while (Date.now() < ctx.fin) {
+      n.ingresadas += ingresarFichas_(ctx);
+      const a = ctx.audio ? transcribirTanda_(ctx) : 0;
+      const b = ctx.texto ? clasificarTanda_(ctx) : 0;
+      n.transcritas += a; n.clasificadas += b;
       if (!a && !b) break;
     }
-    actualizarEstados_();
+    // La señal de fichas nuevas se apaga solo si la bandeja quedó vacía, si nadie envió
+    // algo mientras tanto y si ya pasó un minuto (Drive puede tardar en listar un archivo nuevo).
+    if (hayFichas && ctx.bandeja === 0 && t0 - Number(P.HAY_FICHAS) > 60000 &&
+        props.getProperty('HAY_FICHAS') === P.HAY_FICHAS) props.deleteProperty('HAY_FICHAS');
+    const cuenta = actualizarEstados_();
+    const fin = Date.now();
+    props.setProperties({
+      ULTIMA_REVISION: String(fin),
+      PENDIENTES: String(cuenta.pendientes),
+      ESTADO_MOTOR: JSON.stringify({
+        ultima: fin, origen: op.origen, segundos: Math.round((fin - t0) / 1000),
+        ingresadas: n.ingresadas, transcritas: n.transcritas, clasificadas: n.clasificadas,
+        total: cuenta.total, listas: cuenta.listos, pendientes: cuenta.pendientes, errores: cuenta.errores
+      })
+    });
+    return { hecho: true, ingresadas: n.ingresadas, transcritas: n.transcritas, clasificadas: n.clasificadas, pendientes: cuenta.pendientes, errores: cuenta.errores };
   } finally {
     lock.releaseLock();
   }
 }
 
+/** ¿Alcanza el tiempo para empezar otra llamada a Gemini sin acercarse al límite de 6 minutos? */
+function hayTiempo_(ctx) { return !ctx || Date.now() + SEG_LLAMADA * 1000 <= ctx.tope; }
+
 /** Pasa las fichas de la bandeja de Drive a filas de la hoja, todas de un golpe. */
-function ingresarFichas_() {
+function ingresarFichas_(ctx) {
   const bandeja = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('BANDEJA_ID'));
   const it = bandeja.getFiles();
-  const fichas = [], archivos = [];
-  while (it.hasNext() && archivos.length < 300) {
+  const fichas = [], archivos = [], malas = [];
+  while (it.hasNext() && archivos.length + malas.length < 300) {
     const f = it.next();
-    archivos.push(f);
-    try { fichas.push(JSON.parse(f.getBlob().getDataAsString())); } catch (x) {}
+    let n = null;
+    try { n = JSON.parse(f.getBlob().getDataAsString()); } catch (x) {}
+    if (n && n.id) { fichas.push(n); archivos.push(f); } else malas.push(f);
   }
+  malas.forEach(aCuarentena_);
+  ctx.bandeja = archivos.length + malas.length;
   if (!archivos.length) return 0;
+
   const sh = hoja_();
+  const cab = ctx.cab || asegurarColumnas_(sh);
+  const ci = cab.indexOf('id');
   const ultima = sh.getLastRow();
   const vistos = {};
-  if (ultima > 1) sh.getRange(2, 1, ultima - 1, 1).getValues().forEach(r => { if (r[0]) vistos[String(r[0])] = 1; });
+  if (ultima > 1) sh.getRange(2, ci + 1, ultima - 1, 1).getValues().forEach(r => { if (r[0]) vistos[String(r[0])] = 1; });
   const filas = [];
   fichas.forEach(n => {
-    if (!n || !n.id || vistos[String(n.id)]) return;
+    if (vistos[String(n.id)]) return;
     vistos[String(n.id)] = 1;
-    const o = { id: n.id, recibido: new Date(), nombre: n.nombre, organizacion: n.organizacion, rol: n.rol,
-      estado_ia: 'pendiente', intentos: 0, ocultar: false, estado: 'sin verificar', consentimiento: 'sí' };
+    const o = { id: String(n.id), recibido: new Date(), nombre: n.nombre, organizacion: n.organizacion, rol: n.rol,
+      estado_ia: 'pendiente', intentos: 0, ocultar: false, estado: 'sin verificar', consentimiento: 'sí',
+      enviado: fecha_(n.enviado) };
     PARTES.forEach(p => CAMPOS_PARTE.forEach(c => {
       if (n[p + '_' + c] !== undefined) o[p + '_' + c] = n[p + '_' + c];
     }));
-    filas.push(COLUMNAS.map(c => o[c] === undefined ? '' : seguro_(o[c])));
+    filas.push(cab.map(c => (!c || o[c] === undefined || o[c] === null) ? '' : seguro_(o[c])));
   });
-  if (filas.length) sh.getRange(sh.getLastRow() + 1, 1, filas.length, COLUMNAS.length).setValues(filas);
+  if (filas.length) {
+    const desde = sh.getLastRow() + 1;
+    asegurarFilas_(sh, desde + filas.length - 1);
+    sh.getRange(desde, 1, filas.length, cab.length).setValues(filas);
+  }
   archivos.forEach(f => { try { f.setTrashed(true); } catch (x) {} });
   return filas.length;
 }
 
+/** Una ficha que no se puede leer no se pierde: va a una carpeta aparte para revisarla a mano. */
+function aCuarentena_(f) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    let id = props.getProperty('CUARENTENA_ID');
+    if (!carpetaExiste_(id)) {
+      id = DriveApp.createFolder('La voz de la Junta - cuarentena').getId();
+      props.setProperty('CUARENTENA_ID', id);
+    }
+    f.moveTo(DriveApp.getFolderById(id));
+  } catch (err) {
+    try { f.setTrashed(true); } catch (x) {}
+  }
+}
+
 /** Etapa 1: audio -> texto, hasta LOTE_AUDIO notas de voz en paralelo. */
-function transcribirTanda_(estado) {
+function transcribirTanda_(ctx) {
   const sh = hoja_();
   const datos = sh.getDataRange().getValues();
   if (datos.length < 2) return 0;
@@ -229,48 +386,64 @@ function transcribirTanda_(estado) {
     for (const p of PARTES) {
       if (jobs.length >= LOTE_AUDIO) break;
       const id = String(f[c('id')]), k = id + ':' + p;
-      if (estado.fallaron[k]) continue;
-      if (f[c(p + '_audio_id')] && !f[c(p + '_transcripcion')]) jobs.push({ id: id, p: p, k: k, archivo: f[c(p + '_audio_id')] });
+      if (ctx.fallaron[k]) continue;
+      if (f[c(p + '_audio_id')] && !f[c(p + '_transcripcion')]) jobs.push({ id: id, p: p, k: k, archivo: String(f[c(p + '_audio_id')]) });
     }
   }
   if (!jobs.length) return 0;
+  if (!hayTiempo_(ctx)) { ctx.audio = false; return 0; }
 
   const clave = PropertiesService.getScriptProperties().getProperty(CLAVE_AUDIO);
-  if (!clave) throw new Error('falta ' + CLAVE_AUDIO);
+  if (!clave) { registrarFallo_('AUDIO', { codigo: 0, modelo: '', detalle: 'falta la clave ' + CLAVE_AUDIO + ' en Propiedades del script' }); ctx.audio = false; return 0; }
   const listos = [];
   jobs.forEach(j => {
     // Un audio borrado o dañado solo afecta a su respuesta, no detiene la tanda.
-    try {
-      const blob = DriveApp.getFileById(j.archivo).getBlob();
-      let mime = blob.getContentType() || 'audio/webm';
-      if (/mp4|m4a/.test(mime)) mime = 'audio/mp4';
-      j.cuerpo = {
-        contents: [{ role: 'user', parts: [
-          { text: 'Transcribe literalmente esta nota de voz, en español de Colombia, con puntuación. No resumas, no corrijas, no agregues nada. Quita solo las muletillas repetidas. Responde únicamente con la transcripción.' },
-          { inline_data: { mime_type: mime, data: Utilities.base64Encode(blob.getBytes()) } }
-        ] }],
-        generationConfig: { temperature: 0 }
-      };
-      listos.push(j);
-    } catch (err) {
-      j.real = true;
-    }
+    try { cuerpoAudio_(j); listos.push(j); } catch (err) { j.real = true; }
   });
 
-  if (listos.length) enParalelo_(listos, MODELOS_AUDIO, clave, 'AUDIO');
+  if (listos.length) enParalelo_(listos, MODELOS_AUDIO, clave, 'AUDIO', ctx);
   const cambios = [], hechos = jobs.filter(j => j.texto);
-  hechos.forEach(j => cambios.push({ id: j.id, campo: j.p + '_transcripcion', valor: j.texto }));
+  hechos.forEach(j => {
+    const t = /^[\[(]?\s*inaudible\s*[\])]?\.?$/i.test(j.texto) ? INAUDIBLE : j.texto;
+    cambios.push({ id: j.id, campo: j.p + '_transcripcion', valor: t });
+  });
   const fallas = jobs.filter(j => !j.texto);
-  fallas.forEach(j => { estado.fallaron[j.k] = 1; });
-  const transitorias = fallas.filter(j => !j.real);
-  if (transitorias.length && !hechos.length) estado.audio = false;  // Gemini saturado: esperar al siguiente minuto
-  const aContar = fallas.filter(j => j.real).map(j => j.id).concat(contarTransitorias_(transitorias));
-  aplicarPorId_(sh, cambios, aContar);
+  fallas.forEach(j => { ctx.fallaron[j.k] = 1; });
+  const reales = fallas.filter(j => j.real);
+  const transitorias = fallas.filter(j => !j.real && j.transitoria);
+  if (transitorias.length && !hechos.length) ctx.audio = false;  // Gemini saturado: esperar al siguiente minuto
+  aplicarPorId_(sh, cambios, reales.map(j => j.id).concat(contarTransitorias_(transitorias)));
   return hechos.length;
 }
 
+/** Arma la petición de transcripción de un audio guardado en Drive. */
+function cuerpoAudio_(j) {
+  const archivo = DriveApp.getFileById(j.archivo);
+  const blob = archivo.getBlob();
+  j.mime = mimeAudio_(blob.getContentType(), archivo.getName());
+  j.bytes = blob.getBytes().length;
+  j.cuerpo = {
+    contents: [{ role: 'user', parts: [
+      { text: 'Transcribe literalmente esta nota de voz, en español de Colombia, con puntuación. No resumas, no corrijas, no agregues nada. Quita solo las muletillas repetidas. Responde únicamente con la transcripción. Si no se entiende ninguna palabra, responde exactamente: ' + INAUDIBLE },
+      { inline_data: { mime_type: j.mime, data: Utilities.base64Encode(blob.getBytes()) } }
+    ] }],
+    generationConfig: { temperature: 0 }
+  };
+}
+
+/** Un solo nombre por formato, venga como venga del teléfono o de Drive (Drive a veces dice video/webm). */
+function mimeAudio_(tipo, nombre) {
+  const t = String(tipo || '').toLowerCase().split(';')[0] + ' ' + String(nombre || '').toLowerCase();
+  if (/mp4|m4a/.test(t)) return 'audio/mp4';
+  if (/aac/.test(t)) return 'audio/aac';
+  if (/ogg|opus$/.test(t)) return 'audio/ogg';
+  if (/mpeg|mp3/.test(t)) return 'audio/mp3';
+  if (/wav/.test(t)) return 'audio/wav';
+  return 'audio/webm';
+}
+
 /** Etapa 2: texto -> palanca, sector, resumen y palabras. Hasta LOTE_TEXTO en UNA sola llamada. */
-function clasificarTanda_(estado) {
+function clasificarTanda_(ctx) {
   const sh = hoja_();
   const datos = sh.getDataRange().getValues();
   if (datos.length < 2) return 0;
@@ -284,19 +457,60 @@ function clasificarTanda_(estado) {
     for (const p of PARTES) {
       if (items.length >= LOTE_TEXTO) break;
       if (f[c(p + '_palanca')]) continue;
-      const texto = f[c(p + '_transcripcion')] || f[c(p + '_escrita')] || '';
-      if (!texto) continue;
-      if (f[c(p + '_audio_id')] && !f[c(p + '_transcripcion')]) continue; // espera a que se transcriba
+      const audio = f[c(p + '_audio_id')], tr = String(f[c(p + '_transcripcion')] || '');
+      if (audio && !tr) continue; // espera a que se transcriba
+      const texto = (tr && tr !== INAUDIBLE) ? tr : String(f[c(p + '_escrita')] || '');
+      if (!texto.trim()) continue;
       const id = String(f[c('id')]), k = id + ':' + p;
-      if (estado.fallaron[k]) continue;
-      items.push({ id: id, p: p, k: k, texto: String(texto) });
+      if (ctx.fallaron[k]) continue;
+      items.push({ id: id, p: p, k: k, texto: texto });
     }
   }
   if (!items.length) return 0;
+  if (!hayTiempo_(ctx)) { ctx.texto = false; return 0; }
 
   const clave = PropertiesService.getScriptProperties().getProperty(CLAVE_TEXTO);
-  if (!clave) throw new Error('falta ' + CLAVE_TEXTO);
-  const job = {
+  if (!clave) { registrarFallo_('TEXTO', { codigo: 0, modelo: '', detalle: 'falta la clave ' + CLAVE_TEXTO + ' en Propiedades del script' }); ctx.texto = false; return 0; }
+  items.forEach(it => { ctx.fallaron[it.k] = 1; });  // se desmarcan abajo las que salgan bien
+
+  const hechos = {}, cambios = [], reales = [], transitorias = [];
+  const lote = trabajoClasificacion_(items);
+  enParalelo_([lote], MODELOS_TEXTO, clave, 'TEXTO', ctx);
+  if (lote.texto) leerClasificacion_(lote.texto, items, hechos, cambios);
+  const faltan = items.filter(it => !hechos[it.k]);
+
+  if (faltan.length) {
+    const saturado = !lote.texto && !lote.real && lote.transitoria;
+    const sinIntento = !lote.texto && !lote.real && !lote.transitoria;
+    if (saturado) {
+      transitorias.push.apply(transitorias, faltan);
+      ctx.texto = false;  // Gemini saturado: esperar al siguiente minuto
+    } else if (sinIntento) {
+      // no alcanzó el tiempo: se reintenta en la siguiente ejecución, sin gastar nada
+    } else if (items.length === 1) {
+      reales.push.apply(reales, faltan);
+    } else if (hayTiempo_(ctx)) {
+      // La IA no pudo con la tanda completa (vacía, ilegible o incompleta): se reparte de a una,
+      // para que una sola respuesta problemática no bloquee a las demás.
+      const solos = faltan.map(it => trabajoClasificacion_([it]));
+      enParalelo_(solos, MODELOS_TEXTO, clave, 'TEXTO', ctx);
+      solos.forEach(s => {
+        const it = s.items[0];
+        if (s.texto) leerClasificacion_(s.texto, s.items, hechos, cambios);
+        if (hechos[it.k]) return;
+        if (s.texto || s.real) reales.push(it);
+        else if (s.transitoria) transitorias.push(it);
+      });
+    }
+  }
+  Object.keys(hechos).forEach(k => { delete ctx.fallaron[k]; });
+  aplicarPorId_(sh, cambios, reales.map(it => it.id).concat(contarTransitorias_(transitorias)));
+  return Object.keys(hechos).length;
+}
+
+function trabajoClasificacion_(items) {
+  return {
+    items: items,
     cuerpo: {
       contents: [{ role: 'user', parts: [{ text: instruccionesLote_(items) }] }],
       generationConfig: {
@@ -321,37 +535,34 @@ function clasificarTanda_(estado) {
       }
     }
   };
-
-  enParalelo_([job], MODELOS_TEXTO, clave, 'TEXTO');
-  items.forEach(it => { estado.fallaron[it.k] = 1; });  // se desmarcan abajo las que salgan bien
-  if (!job.texto) {
-    if (job.real) { aplicarPorId_(sh, [], items.map(it => it.id)); return 0; }
-    estado.texto = false;  // Gemini saturado: esperar al siguiente minuto
-    aplicarPorId_(sh, [], contarTransitorias_(items));
-    return 0;
-  }
-  let salida;
-  try { salida = JSON.parse(job.texto); } catch (x) { salida = []; }
-  if (!Array.isArray(salida)) salida = [];
-  const cambios = [], hechos = {};
-  salida.forEach(o => {
-    const it = items[Number(o.n) - 1];
-    if (!it || hechos[it.k] || !PALANCAS[o.palanca]) return;
-    hechos[it.k] = 1;
-    delete estado.fallaron[it.k];
-    const seg = (o.palanca_secundaria === 'ninguna' || o.palanca_secundaria === o.palanca) ? '' : (o.palanca_secundaria || '');
-    const pares = [['palanca', o.palanca], ['palanca_2', seg], ['sector', o.sector || ''],
-      ['resumen', o.resumen || ''], ['confianza', o.confianza || ''],
-      ['palabras', (o.palabras || []).slice(0, 3).join(', ')]];
-    pares.forEach(par => cambios.push({ id: it.id, campo: it.p + '_' + par[0], valor: par[1] }));
-  });
-  // JSON inválido o respuestas que la IA dejó por fuera: cuentan un intento y se reintentan
-  // en la siguiente ejecución, no en un bucle dentro de esta.
-  const faltan = items.filter(it => !hechos[it.k]);
-  aplicarPorId_(sh, cambios, faltan.map(it => it.id));
-  return Object.keys(hechos).length;
 }
 
+/** Lee la respuesta de la IA con desconfianza: solo entra lo que tiene forma válida. */
+function leerClasificacion_(texto, items, hechos, cambios) {
+  let salida = null;
+  try { salida = JSON.parse(String(texto).replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '')); } catch (x) { return; }
+  if (salida && !Array.isArray(salida) && typeof salida === 'object') {
+    const arr = Object.keys(salida).map(k => salida[k]).filter(Array.isArray)[0];
+    salida = arr || [salida];
+  }
+  if (!Array.isArray(salida)) return;
+  salida.forEach(o => {
+    if (!o || typeof o !== 'object') return;
+    const it = items.length === 1 ? items[0] : items[Number(o.n) - 1];
+    if (!it || hechos[it.k] || !PALANCAS[o.palanca]) return;
+    hechos[it.k] = 1;
+    const seg = (PALANCAS[o.palanca_secundaria] && o.palanca_secundaria !== o.palanca) ? o.palanca_secundaria : '';
+    const palabras = (Array.isArray(o.palabras) ? o.palabras : [])
+      .map(w => String(w || '').replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30))
+      .filter(Boolean).slice(0, 3);
+    const pares = [['palanca', o.palanca], ['palanca_2', seg], ['sector', SECTORES[o.sector] ? o.sector : ''],
+      ['resumen', corto_(o.resumen, 300).trim()], ['confianza', ['alta', 'media', 'baja'].indexOf(o.confianza) >= 0 ? o.confianza : ''],
+      ['palabras', palabras.join(', ')]];
+    pares.forEach(par => cambios.push({ id: it.id, campo: it.p + '_' + par[0], valor: par[1] }));
+  });
+}
+
+// ---------- Conocimiento para clasificar (Resumen ejecutivo PND v6) ----------
 /** Texto en minuscula y sin tildes, para comparar contra TERMINOS. */
 function normal_(t) {
   return String(t || '').toLowerCase()
@@ -453,44 +664,91 @@ function instruccionesLote_(items) {
   ].join('\n');
 }
 
+
 /**
- * Lanza todas las llamadas de una tanda a la vez y reintenta con el siguiente modelo las que se saturen.
- * Cada job que sale bien queda con j.texto. Los que fallan quedan con j.real = true si alguna
- * falla fue culpa de la respuesta misma (400, respuesta vacía o ilegible); si todas fueron
- * saturación o configuración (CODIGOS_TRANSITORIOS), j.real queda sin marcar.
+ * Lanza todas las llamadas de una tanda a la vez y reintenta con el siguiente modelo las que fallen.
+ * Cada job que sale bien queda con j.texto. Los que fallan quedan marcados:
+ *   j.real        alguna falla fue culpa de la respuesta misma (400, respuesta vacía o ilegible)
+ *   j.transitoria alguna falla fue saturación o configuración (CODIGOS_TRANSITORIOS, clave inválida)
+ *   ninguna       no se alcanzó a intentar (se acabó el tiempo de esta ejecución)
+ * Con ctx, no empieza un modelo nuevo si no alcanza el tiempo.
  */
-function enParalelo_(jobs, modelos, clave, tipo) {
+function enParalelo_(jobs, modelos, clave, tipo, ctx) {
   let quedan = jobs.slice();
   const props = PropertiesService.getScriptProperties();
   const preferido = props.getProperty('MODELO_' + tipo);
-  const orden = preferido ? [preferido].concat(modelos.filter(m => m !== preferido)) : modelos.slice();
+  const orden = (preferido && modelos.indexOf(preferido) >= 0)
+    ? [preferido].concat(modelos.filter(m => m !== preferido)) : modelos.slice();
+  let fallo = null, exito = false;
   for (const modelo of orden) {
     if (!quedan.length) break;
+    if (!hayTiempo_(ctx)) break;
     const peticiones = quedan.map(j => ({
       url: 'https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent',
       method: 'post', contentType: 'application/json', muteHttpExceptions: true,
       headers: { 'x-goog-api-key': clave }, payload: JSON.stringify(j.cuerpo)
     }));
     let respuestas;
-    try { respuestas = UrlFetchApp.fetchAll(peticiones); } catch (err) { continue; }
+    try { respuestas = UrlFetchApp.fetchAll(peticiones); }
+    catch (err) {
+      quedan.forEach(j => { j.transitoria = true; });
+      fallo = { codigo: 0, modelo: modelo, detalle: String((err && err.message) || err).slice(0, 200) };
+      continue;
+    }
     const siguen = [];
     respuestas.forEach((resp, i) => {
       const j = quedan[i], code = resp.getResponseCode();
       if (code !== 200) {
-        if (CODIGOS_TRANSITORIOS.indexOf(code) < 0) j.real = true;
+        const detalle = detalleError_(resp);
+        // Una clave inválida o un proyecto sin acceso no es culpa de la respuesta: no gasta intentos.
+        const deConfig = code === 400 && /API_KEY_INVALID|API key not valid|FAILED_PRECONDITION|not supported|billing/i.test(detalle);
+        if (CODIGOS_TRANSITORIOS.indexOf(code) >= 0 || deConfig) j.transitoria = true; else j.real = true;
+        fallo = { codigo: code, modelo: modelo, detalle: detalle };
         siguen.push(j);
         return;
       }
       try {
-        const cand = ((JSON.parse(resp.getContentText()).candidates || [])[0] || {}).content || { parts: [] };
-        const txt = (cand.parts || []).map(x => x.text || '').join('').trim();
-        if (txt) { j.texto = txt; } else { j.real = true; siguen.push(j); }
-      } catch (x) { j.real = true; siguen.push(j); }
+        const cuerpo = JSON.parse(resp.getContentText());
+        const cand = (cuerpo.candidates || [])[0] || {};
+        const txt = ((cand.content || {}).parts || []).map(x => x.text || '').join('').trim();
+        if (txt) { j.texto = txt; exito = true; }
+        else {
+          j.real = true;
+          fallo = { codigo: 200, modelo: modelo, detalle: 'respuesta vacía' + (cand.finishReason ? ' (' + cand.finishReason + ')' : '') +
+            (cuerpo.promptFeedback && cuerpo.promptFeedback.blockReason ? ' (bloqueo: ' + cuerpo.promptFeedback.blockReason + ')' : '') };
+          siguen.push(j);
+        }
+      } catch (x) {
+        j.real = true;
+        fallo = { codigo: 200, modelo: modelo, detalle: 'respuesta ilegible' };
+        siguen.push(j);
+      }
     });
-    if (siguen.length < quedan.length) props.setProperty('MODELO_' + tipo, modelo);
+    if (siguen.length < quedan.length) { try { props.setProperty('MODELO_' + tipo, modelo); } catch (x) {} }
     quedan = siguen;
   }
+  if (exito) { try { props.setProperty('EXITO_' + tipo, String(Date.now())); } catch (x) {} }
+  if (fallo) registrarFallo_(tipo, fallo);
   return quedan;
+}
+
+function detalleError_(resp) {
+  const t = String(resp.getContentText() || '');
+  try {
+    const e = JSON.parse(t).error || {};
+    return String((e.status ? e.status + ': ' : '') + (e.message || '')).slice(0, 200);
+  } catch (x) {
+    return t.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+  }
+}
+
+/** Guarda la última falla de Gemini para el panel y para diagnostico(). */
+function registrarFallo_(tipo, fallo) {
+  try {
+    PropertiesService.getScriptProperties().setProperty('ULTIMO_FALLO', JSON.stringify({
+      tipo: tipo, codigo: fallo.codigo, modelo: fallo.modelo, detalle: fallo.detalle, cuando: Date.now()
+    }));
+  } catch (x) {}
 }
 
 /**
@@ -498,6 +756,7 @@ function enParalelo_(jobs, modelos, clave, tipo) {
  * de las filas que ya llevan TOPE_TRANSITORIOS seguidas: esas sí gastan un intento.
  */
 function contarTransitorias_(lista) {
+  if (!lista.length) return [];
   const cache = CacheService.getScriptCache();
   const ids = [];
   lista.forEach(j => {
@@ -531,7 +790,7 @@ function aplicarPorId_(sh, cambios, idsIntento) {
   const sumados = {};
   idsIntento.forEach(id => {
     const r = fila[id];
-    if (r === undefined || sumados[id]) return;
+    if (r === undefined || sumados[id] || kn < 0) return;
     sumados[id] = 1;
     datos[r][kn] = Number(datos[r][kn] || 0) + 1;
     cols.intentos = 1;
@@ -554,59 +813,115 @@ function escribirColumnas_(sh, datos, cab, nombres) {
   });
 }
 
-/** Una fila queda "listo" cuando cada parte con contenido ya tiene su palanca. */
+/** Una fila queda "listo" cuando cada parte con contenido ya tiene su palanca. Devuelve el conteo. */
 function actualizarEstados_() {
   const sh = hoja_();
   const datos = sh.getDataRange().getValues();
-  if (datos.length < 2) return;
+  const cuenta = { total: 0, listos: 0, pendientes: 0, errores: 0, vacias: 0 };
+  if (datos.length < 2) return cuenta;
   const cab = datos[0], c = n => cab.indexOf(n);
   let cambio = false;
   for (let r = 1; r < datos.length; r++) {
     const f = datos[r];
     if (!f[c('id')]) continue;
+    cuenta.total++;
     const actual = String(f[c('estado_ia')]);
-    if (actual.indexOf('error') === 0) continue;
+    if (actual.indexOf('error') === 0) { cuenta.errores++; continue; }
     let completa = true, algo = false;
     PARTES.forEach(p => {
-      const hay = f[c(p + '_escrita')] || f[c(p + '_audio_id')];
-      if (!hay) return;
+      const escrita = String(f[c(p + '_escrita')] || '').trim(), audio = f[c(p + '_audio_id')];
+      if (!escrita && !audio) return;
       algo = true;
-      if (!f[c(p + '_palanca')]) completa = false;
+      if (f[c(p + '_palanca')] || palancaDe_(f[c(p + '_palanca_validada')])) return;  // ubicada por la IA o a mano
+      if (audio && f[c(p + '_transcripcion')] === INAUDIBLE && !escrita) return;       // inaudible y sin texto: nada que ubicar
+      completa = false;
     });
-    let nuevo = actual;
-    if (algo && completa) nuevo = 'listo';
+    let nuevo;
+    if (!algo) nuevo = 'sin respuesta';
+    else if (completa) nuevo = 'listo';
     else if (Number(f[c('intentos')]) >= MAX_INTENTOS) nuevo = 'error: no se pudo procesar después de ' + MAX_INTENTOS + ' intentos';
     else nuevo = 'pendiente';
+    if (nuevo === 'listo') cuenta.listos++;
+    else if (nuevo === 'pendiente') cuenta.pendientes++;
+    else if (nuevo === 'sin respuesta') cuenta.vacias++;
+    else cuenta.errores++;
     if (nuevo !== actual) { datos[r][c('estado_ia')] = nuevo; cambio = true; }
   }
   if (cambio) escribirColumnas_(sh, datos, cab, ['estado_ia']);
+  return cuenta;
 }
 
-// ---------- Datos para la pantalla ----------
+// ---------- Panel: datos y acciones de operador ----------
 function doGet(e) {
   const p = (e && e.parameter) || {};
-  if (p.accion !== 'datos') return json_({ ok: true, servicio: 'La voz de la Junta' });
+  const accion = String(p.accion || '');
+  if (!accion) return salida_(p, { ok: true, servicio: 'La voz de la Junta', version: VERSION });
   const token = PropertiesService.getScriptProperties().getProperty('PANEL_TOKEN');
   if (!token || String(p.token || '') !== token) return salida_(p, { ok: false, error: 'no autorizado' });
+  try {
+    if (accion === 'datos') return salida_(p, datosPanel_());
+    if (accion === 'estado') return salida_(p, { ok: true, motor: estadoMotor_(true) });
+    if (accion === 'procesar') {
+      const r = procesar_({ seg: SEG_RESPALDO, origen: 'panel' });
+      return salida_(p, { ok: true, resultado: r, motor: estadoMotor_(false) });
+    }
+    if (accion === 'reintentar') return salida_(p, { ok: true, devueltas: reintentarErrores_(20000) });
+    return salida_(p, { ok: false, error: 'acción desconocida' });
+  } catch (err) {
+    return salida_(p, { ok: false, error: String((err && err.message) || err) });
+  }
+}
+
+function datosPanel_() {
   const filas = hoja_().getDataRange().getValues();
   const cab = filas.shift(), i = n => cab.indexOf(n);
   const voces = [];
-  filas.filter(r => r[i('id')] && r[i('ocultar')] !== true).forEach(r => {
+  filas.forEach(r => {
+    if (!r[i('id')] || esVerdad_(r[i('ocultar')])) return;
+    const errorFila = String(r[i('estado_ia')]).indexOf('error') === 0;
     PARTES.forEach((p, n) => {
-      const texto = r[i(p + '_transcripcion')] || r[i(p + '_escrita')] || '';
-      if (!texto && !r[i(p + '_audio_id')]) return;
-      const validada = r[i(p + '_palanca_validada')];
+      const escrita = String(r[i(p + '_escrita')] || '').trim();
+      const tr = String(r[i(p + '_transcripcion')] || '').trim();
+      const audio = !!r[i(p + '_audio_id')];
+      if (!escrita && !audio) return;
+      const inaudible = tr === INAUDIBLE;
+      const texto = (tr && !inaudible) ? tr : escrita;
+      const validada = palancaDe_(r[i(p + '_palanca_validada')]);
+      const ia = PALANCAS[r[i(p + '_palanca')]] ? String(r[i(p + '_palanca')]) : '';
+      const palanca = validada || ia;
+      const perdida = !palanca && (errorFila || (inaudible && !escrita));
       voces.push({
-        momento: n + 1, nombre: r[i('nombre')], organizacion: r[i('organizacion')],
-        texto: texto, resumen: r[i(p + '_resumen')],
-        palanca: validada || r[i(p + '_palanca')], palanca_2: r[i(p + '_palanca_2')], sector: r[i(p + '_sector')],
+        id: String(r[i('id')]) + ':' + p,
+        momento: n + 1, nombre: String(r[i('nombre')] || ''), organizacion: String(r[i('organizacion')] || ''),
+        texto: recorta_(texto, 700), resumen: String(r[i(p + '_resumen')] || ''),
+        palanca: palanca, palanca_2: String(r[i(p + '_palanca_2')] || ''), sector: String(r[i(p + '_sector')] || ''),
         palabras: String(r[i(p + '_palabras')] || '').split(',').map(s => s.trim()).filter(Boolean),
-        validada: !!validada, confianza: r[i(p + '_confianza')],
-        procesando: !r[i(p + '_palanca')] && !validada, audio: !!r[i(p + '_audio_id')]
+        validada: !!validada, confianza: String(r[i(p + '_confianza')] || ''),
+        procesando: !palanca && !perdida, fallida: perdida, audio: audio
       });
     });
   });
-  return salida_(p, { ok: true, voces: voces, actualizado: new Date().toISOString() });
+  return { ok: true, voces: voces, actualizado: new Date().toISOString(), motor: estadoMotor_(false) };
+}
+
+/** Lo que el panel necesita saber del motor. Con `completo`, revisa además el disparador. */
+function estadoMotor_(completo) {
+  const P = PropertiesService.getScriptProperties().getProperties();
+  let ultimo = {}, fallo = null;
+  try { ultimo = JSON.parse(P.ESTADO_MOTOR || '{}'); } catch (x) {}
+  try { fallo = P.ULTIMO_FALLO ? JSON.parse(P.ULTIMO_FALLO) : null; } catch (x) {}
+  const m = {
+    version: VERSION, ahora: Date.now(),
+    latido: Number(P.LATIDO || 0), ultima: Number(ultimo.ultima || 0), origen: ultimo.origen || '',
+    pendientes: Number(P.PENDIENTES || 0), errores: Number(ultimo.errores || 0), total: Number(ultimo.total || 0),
+    hayFichas: !!P.HAY_FICHAS,
+    exitoAudio: Number(P.EXITO_AUDIO || 0), exitoTexto: Number(P.EXITO_TEXTO || 0),
+    fallo: fallo
+  };
+  if (completo) {
+    try { m.disparador = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'procesarPendientes').length; } catch (x) {}
+  }
+  return m;
 }
 
 function salida_(p, obj) {
@@ -618,9 +933,18 @@ function salida_(p, obj) {
 }
 
 // ---------- Utilidades ----------
-function hoja_() { return SpreadsheetApp.openById(SHEET_ID).getSheetByName(HOJA); }
+let HOJA_CACHE_ = null;
+function hoja_() {
+  if (HOJA_CACHE_) return HOJA_CACHE_;
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(HOJA);
+  if (!sh) throw new Error('No existe la hoja "' + HOJA + '". Ejecute configurar().');
+  HOJA_CACHE_ = sh;
+  return sh;
+}
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function corto_(s, n) { return String(s == null ? '' : s).slice(0, n); }
+function recorta_(s, n) { s = String(s || ''); return s.length > n ? s.slice(0, n - 1).replace(/\s+\S*$/, '') + '…' : s; }
+function fecha_(s) { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d; }
 /**
  * Un texto que empieza por = + - @ lo toma la hoja como fórmula ("=IMPORTXML(...)" podría
  * sacar datos). El apóstrofo delante lo deja como texto; la hoja no lo muestra ni lo devuelve.
@@ -631,8 +955,88 @@ function limpiar_(s) {
   const marcas = new RegExp('[' + String.fromCharCode(768) + '-' + String.fromCharCode(879) + ']', 'g');
   return String(s || '').normalize('NFD').replace(marcas, '').replace(/[^A-Za-z0-9]+/g, '-').slice(0, 30);
 }
+/** La casilla `ocultar` cuenta como marcada aunque alguien escriba TRUE, sí, x o 1 a mano. */
+function esVerdad_(v) { return v === true || /^(true|verdadero|s[ií]|x|1|ocultar)$/i.test(String(v == null ? '' : v).trim()); }
+/** La palanca validada a mano vale aunque venga con mayúscula, tilde o el nombre largo ("Reglas claras"). */
+function palancaDe_(v) {
+  const n = normal_(v);
+  if (!n) return '';
+  if (PALANCAS[n]) return n;
+  const k = Object.keys(PALANCAS).filter(x => n.indexOf(x) === 0 || (n.length >= 4 && x.indexOf(n) === 0));
+  return k.length === 1 ? k[0] : '';
+}
+function tomarCandado_(ms) {
+  const lock = LockService.getScriptLock();
+  if (lock.tryLock(ms || 120000)) return lock;
+  Logger.log('El proceso de cada minuto sigue trabajando. Intente de nuevo en un par de minutos.');
+  return null;
+}
+/** Borra filas (números de fila de la hoja) de abajo hacia arriba, por bloques contiguos. */
+function borrarFilas_(sh, filas) {
+  if (!filas.length) return;
+  // Sheets no deja borrar todas las filas no congeladas: si hiciera falta, se agrega una vacía al final.
+  if (sh.getMaxRows() - sh.getFrozenRows() <= filas.length) sh.insertRowsAfter(sh.getMaxRows(), 1);
+  const f = filas.slice().sort((a, b) => b - a);
+  let i = 0;
+  while (i < f.length) {
+    const fin = f[i];
+    let ini = fin;
+    while (i + 1 < f.length && f[i + 1] === ini - 1) { i++; ini = f[i]; }
+    sh.deleteRows(ini, fin - ini + 1);
+    i++;
+  }
+}
 
-// ---------- Pruebas ----------
+// ---------- Operación y pruebas (se corren a mano desde el editor) ----------
+
+/** Revisa todo de una vez y dice qué está bien y qué hay que arreglar. */
+function diagnostico() {
+  const L = ['La voz de la Junta · backend ' + VERSION, ''];
+  const ok = (b, t) => L.push((b ? 'OK       ' : 'REVISAR  ') + t);
+  const P = PropertiesService.getScriptProperties().getProperties();
+  const ahora = Date.now();
+  const hace = ms => Math.round((ahora - ms) / 1000) + ' s';
+
+  ok(SHEET_ID.indexOf('PEGUE') !== 0, 'SHEET_ID configurado');
+  let sh = null;
+  try { sh = hoja_(); } catch (err) { ok(false, 'Hoja: ' + ((err && err.message) || err)); }
+  if (sh) {
+    const ancho = Math.max(sh.getLastColumn(), 1);
+    const cab = sh.getRange(1, 1, 1, ancho).getValues()[0].map(String);
+    const faltan = COLUMNAS.filter(c => cab.indexOf(c) < 0);
+    ok(!faltan.length, faltan.length ? 'Faltan columnas: ' + faltan.join(', ') + ' (las agrega el siguiente proceso o configurar())' : 'Encabezado completo (' + cab.length + ' columnas)');
+    const d = sh.getDataRange().getValues(), ce = d[0].indexOf('estado_ia');
+    const est = {};
+    for (let r = 1; r < d.length; r++) { if (!d[r][d[0].indexOf('id')]) continue; const e = String(d[r][ce] || '(vacío)').split(':')[0]; est[e] = (est[e] || 0) + 1; }
+    ok(true, 'Filas: ' + (Object.keys(est).length ? Object.keys(est).map(k => k + ' ' + est[k]).join(' · ') : 'ninguna'));
+    ok(!est.error, est.error ? est.error + ' fila(s) en error: reintentarErrores()' : 'Sin filas en error');
+  }
+  [['CARPETA_ID', 'Carpeta de audios'], ['BANDEJA_ID', 'Bandeja']].forEach(x => ok(carpetaExiste_(P[x[0]]), x[1] + (P[x[0]] ? '' : ': no existe, ejecute configurar()')));
+  if (carpetaExiste_(P.BANDEJA_ID)) {
+    let n = 0; const it = DriveApp.getFolderById(P.BANDEJA_ID).getFiles(); while (it.hasNext() && n < 1000) { it.next(); n++; }
+    ok(n < 50, 'Fichas esperando en la bandeja: ' + n);
+  }
+  ok(!!P.PANEL_TOKEN, 'Clave del panel (PANEL_TOKEN)');
+  ok(!!P[CLAVE_AUDIO] && !!P[CLAVE_TEXTO], 'Claves de Gemini presentes (' + CLAVE_AUDIO + ', ' + CLAVE_TEXTO + ')');
+  ok(!!P[CLAVE_AUDIO] && P[CLAVE_AUDIO] !== P[CLAVE_TEXTO], 'Las dos claves son distintas (deben ser de dos proyectos de Google Cloud)');
+  ok(/\/exec$/.test(P.URL_EXEC || ''), 'URL_EXEC para pruebaRecepcion100()' + (P.URL_EXEC ? '' : ': falta (opcional)'));
+  let disp = 0;
+  try { disp = ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'procesarPendientes').length; } catch (x) {}
+  ok(disp === 1, 'Disparador de cada minuto: ' + disp + (disp === 1 ? '' : disp ? ' (sobran; ejecute activarMotor())' : ' (ejecute activarMotor())'));
+  ok(P.LATIDO && ahora - Number(P.LATIDO) < 180000, 'Último latido del disparador: ' + (P.LATIDO ? 'hace ' + hace(Number(P.LATIDO)) : 'nunca'));
+  if (P.EXITO_AUDIO) ok(true, 'Última transcripción buena: hace ' + hace(Number(P.EXITO_AUDIO)));
+  if (P.EXITO_TEXTO) ok(true, 'Última clasificación buena: hace ' + hace(Number(P.EXITO_TEXTO)));
+  if (P.ULTIMO_FALLO) {
+    try {
+      const f = JSON.parse(P.ULTIMO_FALLO);
+      ok(ahora - f.cuando > 600000, 'Última falla de Gemini (' + f.tipo + ', ' + f.modelo + ', código ' + f.codigo + ') hace ' + hace(f.cuando) + ': ' + f.detalle);
+    } catch (x) {}
+  }
+  if (P.MODELO_AUDIO || P.MODELO_TEXTO) ok(true, 'Modelos en uso: audio ' + (P.MODELO_AUDIO || '-') + ' · texto ' + (P.MODELO_TEXTO || '-'));
+  Logger.log(L.join('\n'));
+  return L;
+}
+
 /** Confirma que las dos claves responden, sin mostrarlas. */
 function verificarClaves() {
   const P = PropertiesService.getScriptProperties();
@@ -648,17 +1052,42 @@ function verificarClaves() {
         method: 'post', contentType: 'application/json', muteHttpExceptions: true,
         headers: { 'x-goog-api-key': par[1] }, payload: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Responde solo: ok' }] }] })
       });
-      Logger.log('   ' + m + ' -> ' + g.getResponseCode());
+      Logger.log('   ' + m + ' -> ' + g.getResponseCode() + (g.getResponseCode() === 200 ? '' : ' ' + detalleError_(g)));
       if (g.getResponseCode() === 200) ok = m;
     });
     Logger.log(par[0] + ': ' + (ok ? 'FUNCIONA (' + ok + ')' : 'NINGÚN MODELO RESPONDIÓ'));
   });
 }
 
+/**
+ * Transcribe la nota de voz más reciente de la carpeta de audios y muestra el resultado.
+ * Para el ensayo: grabar desde un Android y desde un iPhone, y correr esto después de cada uno.
+ */
+function probarTranscripcion() {
+  const P = PropertiesService.getScriptProperties();
+  const clave = P.getProperty(CLAVE_AUDIO);
+  if (!clave) { Logger.log('Falta ' + CLAVE_AUDIO); return; }
+  const it = DriveApp.getFolderById(P.getProperty('CARPETA_ID')).getFiles();
+  let ultimo = null;
+  while (it.hasNext()) { const f = it.next(); if (!ultimo || f.getDateCreated() > ultimo.getDateCreated()) ultimo = f; }
+  if (!ultimo) { Logger.log('Todavía no hay audios. Grabe una nota desde el formulario, espere a que llegue y vuelva a correr esto.'); return; }
+  const j = { archivo: ultimo.getId() };
+  cuerpoAudio_(j);
+  Logger.log('Audio: ' + ultimo.getName() + ' · ' + j.mime + ' · ' + Math.round(j.bytes / 1024) + ' KB · ' + ultimo.getDateCreated());
+  enParalelo_([j], MODELOS_AUDIO, clave, 'AUDIO', null);
+  if (j.texto) Logger.log('TRANSCRIPCIÓN (' + (P.getProperty('MODELO_AUDIO') || '') + '):\n' + j.texto);
+  else Logger.log('NO SE PUDO TRANSCRIBIR. Última falla: ' + (P.getProperty('ULTIMO_FALLO') || '-'));
+}
+
 /** Deja en cola otra vez las filas que quedaron en error. */
 function reintentarErrores() {
-  const lock = tomarCandado_();
-  if (!lock) return;
+  const n = reintentarErrores_(120000);
+  if (n >= 0) Logger.log('Filas devueltas a la cola: ' + n);
+}
+
+function reintentarErrores_(espera) {
+  const lock = tomarCandado_(espera);
+  if (!lock) return -1;
   try {
     const sh = hoja_(), d = sh.getDataRange().getValues(), cab = d[0];
     const ce = cab.indexOf('estado_ia'), ci = cab.indexOf('intentos');
@@ -666,19 +1095,56 @@ function reintentarErrores() {
     for (let r = 1; r < d.length; r++) {
       if (String(d[r][ce]).indexOf('error') === 0) { d[r][ce] = 'pendiente'; d[r][ci] = 0; n++; }
     }
-    if (n) escribirColumnas_(sh, d, cab, ['estado_ia', 'intentos']);
-    Logger.log('Filas devueltas a la cola: ' + n);
+    if (n) {
+      escribirColumnas_(sh, d, cab, ['estado_ia', 'intentos']);
+      PropertiesService.getScriptProperties().setProperty('PENDIENTES', String(n));
+    }
+    return n;
   } finally {
     lock.releaseLock();
   }
 }
 
-/** Espera a que termine el proceso de cada minuto, para no escribir la hoja al mismo tiempo. */
-function tomarCandado_() {
-  const lock = LockService.getScriptLock();
-  if (lock.tryLock(120000)) return lock;
-  Logger.log('El proceso de cada minuto sigue trabajando. Intente de nuevo en un par de minutos.');
-  return null;
+/**
+ * Antes de abrir el formulario el día del evento: copia todo lo que hay en la hoja a una
+ * pestaña "Ensayo <fecha>" y deja la hoja Voces vacía, lista para las respuestas reales.
+ * No borra nada sin copiarlo antes. Las fichas que estén en la bandeja entran primero a la hoja.
+ */
+function archivarEnsayo() {
+  const lock = tomarCandado_(120000);
+  if (!lock) return;
+  try {
+    ingresarFichas_({});
+    const ss = SpreadsheetApp.openById(SHEET_ID), sh = hoja_();
+    const ultima = sh.getLastRow();
+    if (ultima < 2) { Logger.log('La hoja Voces ya está vacía. No hay nada que archivar.'); return; }
+    const nombre = 'Ensayo ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH.mm.ss');
+    sh.copyTo(ss).setName(nombre);
+    const filas = [];
+    for (let r = 2; r <= ultima; r++) filas.push(r);
+    borrarFilas_(sh, filas);
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty('PENDIENTES', '0');
+    props.deleteProperty('ESTADO_MOTOR');
+    Logger.log('Listo: ' + (ultima - 1) + ' filas copiadas a la pestaña "' + nombre + '". La hoja Voces quedó vacía.');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Busca personas que respondieron más de una vez (mismo nombre y organización). Solo informa. */
+function revisarDuplicados() {
+  const d = hoja_().getDataRange().getValues(), cab = d[0], c = n => cab.indexOf(n);
+  const grupos = {};
+  for (let r = 1; r < d.length; r++) {
+    if (!d[r][c('id')] || esVerdad_(d[r][c('ocultar')])) continue;
+    const k = normal_(d[r][c('nombre')]) + ' · ' + normal_(d[r][c('organizacion')]);
+    (grupos[k] = grupos[k] || []).push(r + 1);
+  }
+  const rep = Object.keys(grupos).filter(k => grupos[k].length > 1);
+  Logger.log(rep.length
+    ? 'Posibles duplicados (marque "ocultar" en los que sobren):\n' + rep.map(k => '  ' + k + ': filas ' + grupos[k].join(', ')).join('\n')
+    : 'No hay nombres repetidos.');
 }
 
 /** Simula envíos para la prueba de carga. No usa Gemini: solo llena la bandeja. */
@@ -697,14 +1163,16 @@ function simularCarga_(cuantos) {
       id: 'prueba-' + Utilities.getUuid(),
       nombre: 'Prueba ' + (i + 1), organizacion: 'Organización ' + ((i % 25) + 1), rol: 'Gerente',
       vision_escrita: frases[i % frases.length],
-      compromiso_escrita: 'Nos comprometemos a ' + frases[(i + 3) % frases.length].toLowerCase()
+      compromiso_escrita: 'Nos comprometemos a ' + frases[(i + 3) % frases.length].toLowerCase(),
+      enviado: new Date().toISOString()
     };
     bandeja.createFile(f.id + '.json', JSON.stringify(f), 'application/json');
   }
+  PropertiesService.getScriptProperties().setProperty('HAY_FICHAS', String(Date.now()));
   Logger.log('Fichas de prueba creadas: ' + (cuantos || 200));
 }
 
-/** Prueba de carga: crea 200 respuestas simuladas en la bandeja. */
+/** Prueba de carga: crea 200 respuestas simuladas en la bandeja (no pasa por la recepción). */
 function pruebaCarga200() { simularCarga_(200); }
 
 /**
@@ -728,7 +1196,8 @@ function probarRecepcion_(n) {
         id: 'prueba-' + Utilities.getUuid(), nombre: 'Prueba recepción ' + (i + 1),
         organizacion: 'Organización ' + ((i % 25) + 1), rol: 'Prueba', consentimiento: true,
         vision: { texto: 'Prueba de recepción simultánea número ' + (i + 1) },
-        compromiso: { texto: 'Nos comprometemos a probar la recepción' }
+        compromiso: { texto: 'Nos comprometemos a probar la recepción' },
+        cliente: new Date().toISOString()
       })
     });
   }
@@ -753,17 +1222,19 @@ function pruebaRecepcion100() { probarRecepcion_(100); }
 
 /** Borra las filas y fichas de prueba (las que tienen id que empieza por "prueba-"). */
 function borrarPruebas() {
-  const lock = tomarCandado_();
+  const lock = tomarCandado_(120000);
   if (!lock) return;
   try {
-    const sh = hoja_(), d = sh.getDataRange().getValues();
-    for (let r = d.length - 1; r >= 1; r--) {
-      if (String(d[r][0]).indexOf('prueba-') === 0) sh.deleteRow(r + 1);
-    }
+    const sh = hoja_(), d = sh.getDataRange().getValues(), ci = d[0].indexOf('id');
+    const filas = [];
+    for (let r = 1; r < d.length; r++) if (String(d[r][ci]).indexOf('prueba-') === 0) filas.push(r + 1);
+    borrarFilas_(sh, filas);
     const bandeja = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('BANDEJA_ID'));
     const it = bandeja.getFiles();
-    while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf('prueba-') === 0) f.setTrashed(true); }
-    Logger.log('Pruebas borradas.');
+    let n = 0;
+    while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf('prueba-') === 0) { f.setTrashed(true); n++; } }
+    actualizarEstados_();
+    Logger.log('Pruebas borradas: ' + filas.length + ' filas y ' + n + ' fichas de la bandeja.');
   } finally {
     lock.releaseLock();
   }
