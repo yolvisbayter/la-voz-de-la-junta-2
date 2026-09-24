@@ -220,12 +220,13 @@ function doPost(e) {
     if (!/^[A-Za-z0-9-]{8,64}$/.test(id)) return json_({ ok: false, error: 'id inválido' });
     if (d.consentimiento !== true) return json_({ ok: false, error: 'sin autorización' });
 
-    // Un teléfono que reenvía (porque no alcanzó a ver la respuesta) no duplica nada.
+    // Un teléfono que reenvía (porque no alcanzó a ver la respuesta) no duplica audios: la caché
+    // recuerda los ids recibidos. Si alguno se cuela igual, la hoja lo descarta por id al ingresarlo.
+    // (No se busca en Drive: cada búsqueda suma tiempo a un envío, y aquí importa la velocidad.)
     const cache = CacheService.getScriptCache();
     if (cache.get('visto_' + id)) return json_({ ok: true, repetido: true });
     const P = PropertiesService.getScriptProperties().getProperties();
     const bandeja = DriveApp.getFolderById(P.BANDEJA_ID);
-    if (bandeja.getFilesByName(id + '.json').hasNext()) return json_({ ok: true, repetido: true });
 
     const carpeta = DriveApp.getFolderById(P.CARPETA_ID);
     const ficha = {
