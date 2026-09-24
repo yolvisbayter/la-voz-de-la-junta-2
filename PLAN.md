@@ -80,6 +80,32 @@ Dos decisiones ya tomadas en el prototipo: el tamaño crece con la **raíz** del
 | Subir los logos al repositorio | — | Después del ensayo. `logos.js` pesa 200 KB y subirlo por el editor web toma varios envíos por partes |
 | Congelar el código | — | El jueves, después del ensayo |
 
+## Correcciones de la auditoría del jueves 24
+
+Antes de congelar se corrigió lo que podía fallar en pleno evento:
+
+- **El formulario ya no da por enviada una respuesta que no llegó.** Solo cuenta como enviada si el servidor responde que la recibió; si responde otra cosa o no responde en 90 segundos, queda en el teléfono y se reintenta sola cada 10 a 20 segundos, al azar, para que los teléfonos no vuelvan a llegar todos juntos.
+- **Un 503 ya no gasta intentos**, como decía este plan pero el código no hacía. Si Gemini se satura, la etapa espera al minuto siguiente en vez de insistir en bucle. Solo si una misma respuesta lleva diez minutos seguidos fallando así se cuenta un intento.
+- **Una respuesta de la IA que no se puede leer** cuenta un intento y se reintenta al minuto siguiente; antes repetía la misma llamada durante cuatro minutos sin avanzar.
+- **Un audio borrado o dañado** afecta solo a su respuesta; antes detenía todo el proceso.
+- **Cada resultado se escribe buscando la fila por su id**, no por su posición, y el proceso usa un candado real. `borrarPruebas()` y `reintentarErrores()` esperan a que termine el proceso de cada minuto.
+- **Un nombre que empiece por `=`** ya no se vuelve fórmula en la hoja.
+- **Logos:** una organización se reconoce solo si el nombre coincide sin duda. «Cámara de Comercio de Bogotá» ya no sale con el logo de la de Cartagena, ni «Gobernación del Atlántico» con el de la de Bolívar. Si hay duda, sale el escudo de iniciales.
+- **Árbol de logos:** la ventana aparte se actualiza con cada refresco y sigue la forma elegida en el panel. En «Burbujas», las burbujas se achican hasta que quepan todas; antes, con 30 organizaciones de igual tamaño, solo cabían 11 y el resto desaparecía sin aviso.
+- **El muro de voces** ya no parpadea cada 20 segundos: solo entra con animación la tarjeta nueva.
+
+`pruebaCarga200()` no pasaba por la recepción. Para eso está `pruebaRecepcion100()`, que se corre en el ensayo.
+
+## Protocolo del día
+
+| Cuándo | Qué |
+| --- | --- |
+| Al pegar el código nuevo | Publicar una **nueva versión** en la misma implementación (*Gestionar implementaciones → editar*) para que la dirección `/exec` no cambie |
+| En el ensayo | `verificarClaves()`, luego `pruebaRecepcion100()` y mirar cuántas entraron bien; después `borrarPruebas()` |
+| Antes de abrir el formulario | `borrarPruebas()` y revisar que la hoja quede solo con el encabezado |
+| Durante el evento | **No ordenar ni borrar filas** en la hoja. Para mirar por organización o palanca, usar *Datos → Vistas de filtro*, que no mueven las filas. Corregir solo `*_palanca_validada`, `ocultar`, `estado` y `notas_equipo` |
+| Si una fila queda en error | `reintentarErrores()` |
+
 ## Riesgos y plan B
 
 | Riesgo | Plan B |

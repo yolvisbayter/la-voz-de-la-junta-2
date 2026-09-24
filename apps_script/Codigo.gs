@@ -15,6 +15,9 @@
  *     (sector vs. palanca, agua vs. clima, empleo vs. formacion, reglas vs. brechas),
  *     ocho ejemplos resueltos, y una pista deterministica por palabras clave que se
  *     le pasa a la IA como apoyo — no como respuesta.
+ *  6. (24 sep) Candado real (LockService); resultados escritos por id y no por posición;
+ *     la saturación de Gemini no gasta intentos; un audio dañado o una respuesta ilegible
+ *     de la IA solo afectan a su fila; textos que empiezan por = no se vuelven fórmulas.
  *
  * Montaje: ver README.md. Antes del evento ejecute verificarClaves().
  */
@@ -32,7 +35,12 @@ const MODELOS_TEXTO = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini
 const LOTE_AUDIO = 25;   // transcripciones en paralelo por tanda
 const LOTE_TEXTO = 20;   // respuestas clasificadas en una sola llamada
 const SEG_MAX = 260;     // segundos de trabajo por ejecución (el tope de Apps Script son 360)
-const MAX_INTENTOS = 8;
+const MAX_INTENTOS = 8;  // fallas REALES (audio ilegible, respuesta vacía o inválida) antes de marcar error
+// Gemini saturado (429, 5xx) o un modelo que no existe no es culpa de la respuesta: no gasta
+// intentos. Solo si una misma respuesta lleva TOPE_TRANSITORIOS minutos seguidos fallando así,
+// se cuenta un intento, para que una respuesta que siempre falla no quede en cola para siempre.
+const CODIGOS_TRANSITORIOS = [403, 404, 408, 429, 500, 502, 503, 504];
+const TOPE_TRANSITORIOS = 10;
 
 const PARTES = ['vision', 'compromiso'];
 const CAMPOS_PARTE = ['escrita', 'audio_url', 'audio_id', 'transcripcion', 'palanca', 'palanca_2', 'sector', 'resumen', 'confianza', 'palanca_validada'];
@@ -125,6 +133,7 @@ function doPost(e) {
   try {
     const d = JSON.parse(e.postData.contents);
     if (!d.id || !d.nombre || !d.organizacion) return json_({ ok: false, error: 'faltan datos' });
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(String(d.id))) return json_({ ok: false, error: 'id inválido' });
     if (d.consentimiento !== true) return json_({ ok: false, error: 'sin autorización' });
     const props = PropertiesService.getScriptProperties();
     const carpeta = DriveApp.getFolderById(props.getProperty('CARPETA_ID'));
@@ -154,20 +163,23 @@ function doPost(e) {
 
 // ---------- Proceso de cada minuto ----------
 function procesarPendientes() {
-  const cache = CacheService.getScriptCache();
-  if (cache.get('procesando')) return;
-  cache.put('procesando', '1', SEG_MAX + 40);
+  // Candado real: si la ejecución anterior sigue trabajando, esta no arranca.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return;
   const t0 = Date.now();
+  // audio/texto: la etapa sigue activa en esta ejecución. fallaron: respuestas que ya
+  // fallaron en esta ejecución; se reintentan en la siguiente, no en la misma vuelta.
+  const estado = { audio: true, texto: true, fallaron: {} };
   try {
     ingresarFichas_();
     while ((Date.now() - t0) / 1000 < SEG_MAX) {
-      const a = transcribirTanda_();
-      const b = clasificarTanda_();
+      const a = estado.audio ? transcribirTanda_(estado) : 0;
+      const b = estado.texto ? clasificarTanda_(estado) : 0;
       if (!a && !b) break;
     }
     actualizarEstados_();
   } finally {
-    cache.remove('procesando');
+    lock.releaseLock();
   }
 }
 
@@ -195,7 +207,7 @@ function ingresarFichas_() {
     PARTES.forEach(p => CAMPOS_PARTE.forEach(c => {
       if (n[p + '_' + c] !== undefined) o[p + '_' + c] = n[p + '_' + c];
     }));
-    filas.push(COLUMNAS.map(c => o[c] === undefined ? '' : o[c]));
+    filas.push(COLUMNAS.map(c => o[c] === undefined ? '' : seguro_(o[c])));
   });
   if (filas.length) sh.getRange(sh.getLastRow() + 1, 1, filas.length, COLUMNAS.length).setValues(filas);
   archivos.forEach(f => { try { f.setTrashed(true); } catch (x) {} });
@@ -203,7 +215,7 @@ function ingresarFichas_() {
 }
 
 /** Etapa 1: audio -> texto, hasta LOTE_AUDIO notas de voz en paralelo. */
-function transcribirTanda_() {
+function transcribirTanda_(estado) {
   const sh = hoja_();
   const datos = sh.getDataRange().getValues();
   if (datos.length < 2) return 0;
@@ -211,44 +223,54 @@ function transcribirTanda_() {
   const jobs = [];
   for (let r = 1; r < datos.length && jobs.length < LOTE_AUDIO; r++) {
     const f = datos[r];
+    if (!f[c('id')]) continue;
     if (String(f[c('estado_ia')]).indexOf('error') === 0) continue;
     if (Number(f[c('intentos')]) >= MAX_INTENTOS) continue;
     for (const p of PARTES) {
       if (jobs.length >= LOTE_AUDIO) break;
-      if (f[c(p + '_audio_id')] && !f[c(p + '_transcripcion')]) jobs.push({ r: r, p: p, id: f[c(p + '_audio_id')] });
+      const id = String(f[c('id')]), k = id + ':' + p;
+      if (estado.fallaron[k]) continue;
+      if (f[c(p + '_audio_id')] && !f[c(p + '_transcripcion')]) jobs.push({ id: id, p: p, k: k, archivo: f[c(p + '_audio_id')] });
     }
   }
   if (!jobs.length) return 0;
 
   const clave = PropertiesService.getScriptProperties().getProperty(CLAVE_AUDIO);
   if (!clave) throw new Error('falta ' + CLAVE_AUDIO);
+  const listos = [];
   jobs.forEach(j => {
-    const blob = DriveApp.getFileById(j.id).getBlob();
-    let mime = blob.getContentType() || 'audio/webm';
-    if (/mp4|m4a/.test(mime)) mime = 'audio/mp4';
-    j.cuerpo = {
-      contents: [{ role: 'user', parts: [
-        { text: 'Transcribe literalmente esta nota de voz, en español de Colombia, con puntuación. No resumas, no corrijas, no agregues nada. Quita solo las muletillas repetidas. Responde únicamente con la transcripción.' },
-        { inline_data: { mime_type: mime, data: Utilities.base64Encode(blob.getBytes()) } }
-      ] }],
-      generationConfig: { temperature: 0 }
-    };
+    // Un audio borrado o dañado solo afecta a su respuesta, no detiene la tanda.
+    try {
+      const blob = DriveApp.getFileById(j.archivo).getBlob();
+      let mime = blob.getContentType() || 'audio/webm';
+      if (/mp4|m4a/.test(mime)) mime = 'audio/mp4';
+      j.cuerpo = {
+        contents: [{ role: 'user', parts: [
+          { text: 'Transcribe literalmente esta nota de voz, en español de Colombia, con puntuación. No resumas, no corrijas, no agregues nada. Quita solo las muletillas repetidas. Responde únicamente con la transcripción.' },
+          { inline_data: { mime_type: mime, data: Utilities.base64Encode(blob.getBytes()) } }
+        ] }],
+        generationConfig: { temperature: 0 }
+      };
+      listos.push(j);
+    } catch (err) {
+      j.real = true;
+    }
   });
 
-  const pendientes = enParalelo_(jobs, MODELOS_AUDIO, clave, 'AUDIO');
-  const cambios = {};
-  jobs.forEach(j => {
-    if (!j.texto) return;
-    datos[j.r][c(j.p + '_transcripcion')] = j.texto;
-    cambios[j.p + '_transcripcion'] = 1;
-  });
-  if (pendientes.length) marcarIntento_(datos, cab, pendientes);
-  escribirColumnas_(sh, datos, cab, Object.keys(cambios).concat(pendientes.length ? ['intentos'] : []));
-  return jobs.length - pendientes.length;
+  if (listos.length) enParalelo_(listos, MODELOS_AUDIO, clave, 'AUDIO');
+  const cambios = [], hechos = jobs.filter(j => j.texto);
+  hechos.forEach(j => cambios.push({ id: j.id, campo: j.p + '_transcripcion', valor: j.texto }));
+  const fallas = jobs.filter(j => !j.texto);
+  fallas.forEach(j => { estado.fallaron[j.k] = 1; });
+  const transitorias = fallas.filter(j => !j.real);
+  if (transitorias.length && !hechos.length) estado.audio = false;  // Gemini saturado: esperar al siguiente minuto
+  const aContar = fallas.filter(j => j.real).map(j => j.id).concat(contarTransitorias_(transitorias));
+  aplicarPorId_(sh, cambios, aContar);
+  return hechos.length;
 }
 
 /** Etapa 2: texto -> palanca, sector, resumen y palabras. Hasta LOTE_TEXTO en UNA sola llamada. */
-function clasificarTanda_() {
+function clasificarTanda_(estado) {
   const sh = hoja_();
   const datos = sh.getDataRange().getValues();
   if (datos.length < 2) return 0;
@@ -256,6 +278,7 @@ function clasificarTanda_() {
   const items = [];
   for (let r = 1; r < datos.length && items.length < LOTE_TEXTO; r++) {
     const f = datos[r];
+    if (!f[c('id')]) continue;
     if (String(f[c('estado_ia')]).indexOf('error') === 0) continue;
     if (Number(f[c('intentos')]) >= MAX_INTENTOS) continue;
     for (const p of PARTES) {
@@ -264,7 +287,9 @@ function clasificarTanda_() {
       const texto = f[c(p + '_transcripcion')] || f[c(p + '_escrita')] || '';
       if (!texto) continue;
       if (f[c(p + '_audio_id')] && !f[c(p + '_transcripcion')]) continue; // espera a que se transcriba
-      items.push({ r: r, p: p, texto: String(texto) });
+      const id = String(f[c('id')]), k = id + ':' + p;
+      if (estado.fallaron[k]) continue;
+      items.push({ id: id, p: p, k: k, texto: String(texto) });
     }
   }
   if (!items.length) return 0;
@@ -297,30 +322,34 @@ function clasificarTanda_() {
     }
   };
 
-  const fallaron = enParalelo_([job], MODELOS_TEXTO, clave, 'TEXTO');
-  if (fallaron.length || !job.texto) {
-    marcarIntento_(datos, cab, items);
-    escribirColumnas_(sh, datos, cab, ['intentos']);
+  enParalelo_([job], MODELOS_TEXTO, clave, 'TEXTO');
+  items.forEach(it => { estado.fallaron[it.k] = 1; });  // se desmarcan abajo las que salgan bien
+  if (!job.texto) {
+    if (job.real) { aplicarPorId_(sh, [], items.map(it => it.id)); return 0; }
+    estado.texto = false;  // Gemini saturado: esperar al siguiente minuto
+    aplicarPorId_(sh, [], contarTransitorias_(items));
     return 0;
   }
   let salida;
   try { salida = JSON.parse(job.texto); } catch (x) { salida = []; }
   if (!Array.isArray(salida)) salida = [];
-  const cambios = {};
+  const cambios = [], hechos = {};
   salida.forEach(o => {
     const it = items[Number(o.n) - 1];
-    if (!it || !o.palanca) return;
+    if (!it || hechos[it.k] || !PALANCAS[o.palanca]) return;
+    hechos[it.k] = 1;
+    delete estado.fallaron[it.k];
     const seg = (o.palanca_secundaria === 'ninguna' || o.palanca_secundaria === o.palanca) ? '' : (o.palanca_secundaria || '');
     const pares = [['palanca', o.palanca], ['palanca_2', seg], ['sector', o.sector || ''],
       ['resumen', o.resumen || ''], ['confianza', o.confianza || ''],
       ['palabras', (o.palabras || []).slice(0, 3).join(', ')]];
-    pares.forEach(par => {
-      datos[it.r][c(it.p + '_' + par[0])] = par[1];
-      cambios[it.p + '_' + par[0]] = 1;
-    });
+    pares.forEach(par => cambios.push({ id: it.id, campo: it.p + '_' + par[0], valor: par[1] }));
   });
-  escribirColumnas_(sh, datos, cab, Object.keys(cambios));
-  return items.length;
+  // JSON inválido o respuestas que la IA dejó por fuera: cuentan un intento y se reintentan
+  // en la siguiente ejecución, no en un bucle dentro de esta.
+  const faltan = items.filter(it => !hechos[it.k]);
+  aplicarPorId_(sh, cambios, faltan.map(it => it.id));
+  return Object.keys(hechos).length;
 }
 
 /** Texto en minuscula y sin tildes, para comparar contra TERMINOS. */
@@ -424,7 +453,12 @@ function instruccionesLote_(items) {
   ].join('\n');
 }
 
-/** Lanza todas las llamadas de una tanda a la vez y reintenta con el siguiente modelo las que se saturen. */
+/**
+ * Lanza todas las llamadas de una tanda a la vez y reintenta con el siguiente modelo las que se saturen.
+ * Cada job que sale bien queda con j.texto. Los que fallan quedan con j.real = true si alguna
+ * falla fue culpa de la respuesta misma (400, respuesta vacía o ilegible); si todas fueron
+ * saturación o configuración (CODIGOS_TRANSITORIOS), j.real queda sin marcar.
+ */
 function enParalelo_(jobs, modelos, clave, tipo) {
   let quedan = jobs.slice();
   const props = PropertiesService.getScriptProperties();
@@ -442,12 +476,16 @@ function enParalelo_(jobs, modelos, clave, tipo) {
     const siguen = [];
     respuestas.forEach((resp, i) => {
       const j = quedan[i], code = resp.getResponseCode();
-      if (code !== 200) { siguen.push(j); return; }
+      if (code !== 200) {
+        if (CODIGOS_TRANSITORIOS.indexOf(code) < 0) j.real = true;
+        siguen.push(j);
+        return;
+      }
       try {
         const cand = ((JSON.parse(resp.getContentText()).candidates || [])[0] || {}).content || { parts: [] };
         const txt = (cand.parts || []).map(x => x.text || '').join('').trim();
-        if (txt) { j.texto = txt; } else { siguen.push(j); }
-      } catch (x) { siguen.push(j); }
+        if (txt) { j.texto = txt; } else { j.real = true; siguen.push(j); }
+      } catch (x) { j.real = true; siguen.push(j); }
     });
     if (siguen.length < quedan.length) props.setProperty('MODELO_' + tipo, modelo);
     quedan = siguen;
@@ -455,11 +493,50 @@ function enParalelo_(jobs, modelos, clave, tipo) {
   return quedan;
 }
 
-function marcarIntento_(datos, cab, items) {
-  const ci = cab.indexOf('intentos');
-  const filas = {};
-  items.forEach(it => { filas[it.r] = 1; });
-  Object.keys(filas).forEach(r => { datos[r][ci] = Number(datos[r][ci] || 0) + 1; });
+/**
+ * Cuenta las fallas por saturación de cada respuesta entre ejecuciones. Devuelve los ids
+ * de las filas que ya llevan TOPE_TRANSITORIOS seguidas: esas sí gastan un intento.
+ */
+function contarTransitorias_(lista) {
+  const cache = CacheService.getScriptCache();
+  const ids = [];
+  lista.forEach(j => {
+    const k = 'tr_' + j.k;
+    const n = Number(cache.get(k) || 0) + 1;
+    if (n >= TOPE_TRANSITORIOS) { ids.push(j.id); cache.remove(k); }
+    else cache.put(k, String(n), 21600);
+  });
+  return ids;
+}
+
+/**
+ * Aplica los resultados buscando cada fila por su id, sobre una lectura fresca de la hoja.
+ * Así, si alguien ordena la hoja o borra una fila mientras Gemini responde, cada resultado
+ * cae en su fila y no en la que estaba en esa posición antes.
+ * cambios: [{id, campo, valor}]. idsIntento: filas que suman un intento (una vez por fila).
+ */
+function aplicarPorId_(sh, cambios, idsIntento) {
+  if (!cambios.length && !idsIntento.length) return;
+  const datos = sh.getDataRange().getValues();
+  const cab = datos[0], ci = cab.indexOf('id'), kn = cab.indexOf('intentos');
+  const fila = {};
+  for (let r = 1; r < datos.length; r++) if (datos[r][ci]) fila[String(datos[r][ci])] = r;
+  const cols = {};
+  cambios.forEach(x => {
+    const r = fila[x.id], k = cab.indexOf(x.campo);
+    if (r === undefined || k < 0) return;
+    datos[r][k] = x.valor;
+    cols[x.campo] = 1;
+  });
+  const sumados = {};
+  idsIntento.forEach(id => {
+    const r = fila[id];
+    if (r === undefined || sumados[id]) return;
+    sumados[id] = 1;
+    datos[r][kn] = Number(datos[r][kn] || 0) + 1;
+    cols.intentos = 1;
+  });
+  escribirColumnas_(sh, datos, cab, Object.keys(cols));
 }
 
 /** Escribe columnas completas (nunca las que edita el equipo a mano). */
@@ -472,7 +549,7 @@ function escribirColumnas_(sh, datos, cab, nombres) {
     const col = cab.indexOf(nombre) + 1;
     if (col < 1) return;
     const vals = [];
-    for (let r = 1; r <= n; r++) vals.push([datos[r][col - 1]]);
+    for (let r = 1; r <= n; r++) vals.push([seguro_(datos[r][col - 1])]);
     sh.getRange(2, col, n, 1).setValues(vals);
   });
 }
@@ -544,6 +621,12 @@ function salida_(p, obj) {
 function hoja_() { return SpreadsheetApp.openById(SHEET_ID).getSheetByName(HOJA); }
 function json_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 function corto_(s, n) { return String(s == null ? '' : s).slice(0, n); }
+/**
+ * Un texto que empieza por = + - @ lo toma la hoja como fórmula ("=IMPORTXML(...)" podría
+ * sacar datos). El apóstrofo delante lo deja como texto; la hoja no lo muestra ni lo devuelve.
+ * Se aplica en cada escritura, porque escribirColumnas_ reescribe columnas enteras.
+ */
+function seguro_(v) { return (typeof v === 'string' && /^[=+\-@\t\r]/.test(v)) ? "'" + v : v; }
 function limpiar_(s) {
   const marcas = new RegExp('[' + String.fromCharCode(768) + '-' + String.fromCharCode(879) + ']', 'g');
   return String(s || '').normalize('NFD').replace(marcas, '').replace(/[^A-Za-z0-9]+/g, '-').slice(0, 30);
@@ -574,14 +657,28 @@ function verificarClaves() {
 
 /** Deja en cola otra vez las filas que quedaron en error. */
 function reintentarErrores() {
-  const sh = hoja_(), d = sh.getDataRange().getValues(), cab = d[0];
-  const ce = cab.indexOf('estado_ia'), ci = cab.indexOf('intentos');
-  let n = 0;
-  for (let r = 1; r < d.length; r++) {
-    if (String(d[r][ce]).indexOf('error') === 0) { d[r][ce] = 'pendiente'; d[r][ci] = 0; n++; }
+  const lock = tomarCandado_();
+  if (!lock) return;
+  try {
+    const sh = hoja_(), d = sh.getDataRange().getValues(), cab = d[0];
+    const ce = cab.indexOf('estado_ia'), ci = cab.indexOf('intentos');
+    let n = 0;
+    for (let r = 1; r < d.length; r++) {
+      if (String(d[r][ce]).indexOf('error') === 0) { d[r][ce] = 'pendiente'; d[r][ci] = 0; n++; }
+    }
+    if (n) escribirColumnas_(sh, d, cab, ['estado_ia', 'intentos']);
+    Logger.log('Filas devueltas a la cola: ' + n);
+  } finally {
+    lock.releaseLock();
   }
-  if (n) escribirColumnas_(sh, d, cab, ['estado_ia', 'intentos']);
-  Logger.log('Filas devueltas a la cola: ' + n);
+}
+
+/** Espera a que termine el proceso de cada minuto, para no escribir la hoja al mismo tiempo. */
+function tomarCandado_() {
+  const lock = LockService.getScriptLock();
+  if (lock.tryLock(120000)) return lock;
+  Logger.log('El proceso de cada minuto sigue trabajando. Intente de nuevo en un par de minutos.');
+  return null;
 }
 
 /** Simula envíos para la prueba de carga. No usa Gemini: solo llena la bandeja. */
@@ -610,14 +707,64 @@ function simularCarga_(cuantos) {
 /** Prueba de carga: crea 200 respuestas simuladas en la bandeja. */
 function pruebaCarga200() { simularCarga_(200); }
 
+/**
+ * Prueba de recepción: manda n envíos SIMULTÁNEOS a la aplicación web publicada, como si
+ * n teléfonos enviaran a la vez. A diferencia de pruebaCarga200, esta sí pasa por doPost,
+ * que es donde está el límite de ejecuciones simultáneas de Apps Script.
+ * Son respuestas escritas, sin audio, con id "prueba-": borrarPruebas() las limpia.
+ * Requiere la propiedad del script URL_EXEC con la dirección que termina en /exec.
+ */
+function probarRecepcion_(n) {
+  const url = PropertiesService.getScriptProperties().getProperty('URL_EXEC');
+  if (!url || !/\/exec$/.test(url)) {
+    Logger.log('Agregue en Propiedades del script URL_EXEC = la dirección de la aplicación web que termina en /exec.');
+    return;
+  }
+  const peticiones = [];
+  for (let i = 0; i < n; i++) {
+    peticiones.push({
+      url: url, method: 'post', contentType: 'text/plain;charset=utf-8', muteHttpExceptions: true,
+      payload: JSON.stringify({
+        id: 'prueba-' + Utilities.getUuid(), nombre: 'Prueba recepción ' + (i + 1),
+        organizacion: 'Organización ' + ((i % 25) + 1), rol: 'Prueba', consentimiento: true,
+        vision: { texto: 'Prueba de recepción simultánea número ' + (i + 1) },
+        compromiso: { texto: 'Nos comprometemos a probar la recepción' }
+      })
+    });
+  }
+  const t0 = Date.now();
+  const respuestas = UrlFetchApp.fetchAll(peticiones);
+  let ok = 0;
+  const fallas = {};
+  respuestas.forEach(r => {
+    let j = null;
+    try { j = JSON.parse(r.getContentText()); } catch (x) {}
+    if (j && j.ok) { ok++; return; }
+    const k = 'HTTP ' + r.getResponseCode() + ' · ' + (j && j.error ? j.error : 'respuesta que no es JSON');
+    fallas[k] = (fallas[k] || 0) + 1;
+  });
+  Logger.log('Recibidas bien: ' + ok + ' de ' + n + ' en ' + Math.round((Date.now() - t0) / 1000) + ' s');
+  Object.keys(fallas).forEach(k => Logger.log('   fallaron ' + fallas[k] + ': ' + k));
+  if (ok < n) Logger.log('Las que fallan, el formulario las guarda en el teléfono y las reintenta solo cada 10 a 20 s.');
+}
+
+/** Prueba de recepción con 100 envíos simultáneos. */
+function pruebaRecepcion100() { probarRecepcion_(100); }
+
 /** Borra las filas y fichas de prueba (las que tienen id que empieza por "prueba-"). */
 function borrarPruebas() {
-  const sh = hoja_(), d = sh.getDataRange().getValues();
-  for (let r = d.length - 1; r >= 1; r--) {
-    if (String(d[r][0]).indexOf('prueba-') === 0) sh.deleteRow(r + 1);
+  const lock = tomarCandado_();
+  if (!lock) return;
+  try {
+    const sh = hoja_(), d = sh.getDataRange().getValues();
+    for (let r = d.length - 1; r >= 1; r--) {
+      if (String(d[r][0]).indexOf('prueba-') === 0) sh.deleteRow(r + 1);
+    }
+    const bandeja = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('BANDEJA_ID'));
+    const it = bandeja.getFiles();
+    while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf('prueba-') === 0) f.setTrashed(true); }
+    Logger.log('Pruebas borradas.');
+  } finally {
+    lock.releaseLock();
   }
-  const bandeja = DriveApp.getFolderById(PropertiesService.getScriptProperties().getProperty('BANDEJA_ID'));
-  const it = bandeja.getFiles();
-  while (it.hasNext()) { const f = it.next(); if (f.getName().indexOf('prueba-') === 0) f.setTrashed(true); }
-  Logger.log('Pruebas borradas.');
 }

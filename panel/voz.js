@@ -119,17 +119,27 @@ const ORGS=[
 
 /* indice de busqueda, de la clave mas larga a la mas corta para que
    "fundacion puerto de cartagena" gane sobre "puerto de cartagena" */
+const normOrg=t=>sinTildes(t).replace(/[^a-z0-9ñ ]/g," ").replace(/\s+/g," ").trim();
 const ORGIDX=(()=>{const m=new Map();
-  ORGS.forEach((o,i)=>{m.set(sinTildes(o[0]).replace(/[^a-z0-9ñ ]/g," ").replace(/\s+/g," ").trim(),i);o[2].forEach(a=>{if(!m.has(a))m.set(a,i)})});
+  ORGS.forEach((o,i)=>{m.set(normOrg(o[0]),i);o[2].forEach(a=>{const k=normOrg(a);if(!m.has(k))m.set(k,i)})});
   return [...m.entries()].sort((a,b)=>b[0].length-a[0].length)})();
+/* Una organizacion se reconoce solo cuando no hay duda: su nombre o una de sus formas,
+   completo, y a lo sumo rodeado de estas palabras de relleno o de lugar
+   ("la Camara de Comercio de Cartagena", "ANDI seccional Bolivar").
+   Asi "Camara de Comercio de Bogota" o "Gobernacion del Atlantico" no se confunden con
+   las de la lista: un logo equivocado en pantalla es peor que un escudo de iniciales. */
+const RELLENO=new Set("la el los las de del y e en cartagena bolivar indias seccional regional capitulo colombia sa sas".split(" "));
 const cacheOrg=new Map();
 function buscaOrg(txt){
-  const n=sinTildes(txt).replace(/[^a-z0-9ñ ]/g," ").replace(/\s+/g," ").trim();
+  const n=normOrg(txt);
   if(!n)return -1;
   if(cacheOrg.has(n))return cacheOrg.get(n);
   let r=-1;
   for(const [k,i] of ORGIDX){if(n===k){r=i;break}}
-  if(r<0)for(const [k,i] of ORGIDX){if(k.length>=4&&(n.indexOf(k)>=0||k.indexOf(n)>=0)){r=i;break}}
+  if(r<0){const t=" "+n+" ";
+    for(const [k,i] of ORGIDX){const x=t.indexOf(" "+k+" ");if(x<0)continue;
+      const resto=(t.slice(0,x)+" "+t.slice(x+k.length+2)).split(" ").filter(Boolean);
+      if(resto.every(w=>RELLENO.has(w))){r=i;break}}}
   cacheOrg.set(n,r);return r;
 }
 /* colores del escudo: los de la paleta que aguantan texto blanco encima */
@@ -231,9 +241,7 @@ function arbRamas(o,oscuro){
     <svg viewBox="0 0 ${ARB_W} ${H}" width="${ARB_W}" height="${H}">${ramas}</svg>`+
     pos.map(p=>`<span class="arb-pin" style="left:${p.x}px;top:${p.y}px">${arbFicha(p.nom,p.n,p.h,p.h>=50)}</span>`).join("")+`</div>`;
 }
-function arbBurbujas(o){
-  const max=o[0][1], H=780;
-  const R=n=>Math.round(33+77*Math.sqrt(n)/Math.sqrt(max));
+function arbColoca(o,R,H){
   const it=o.map(x=>({nom:x[0],n:x[1],r:R(x[1])}));
   it[0].x=ARB_W/2; it[0].y=it[0].r+18;
   const p=[it[0]];
@@ -247,6 +255,19 @@ function arbBurbujas(o){
     }
     if(c.x==null){c.x=-999;c.y=-999}
     p.push(c);
+  }
+  return p;
+}
+function arbBurbujas(o){
+  const max=o[0][1], H=780;
+  /* Si a tamaño completo no caben, todas las burbujas se achican por igual hasta que
+     quepan: ninguna organización que habló puede quedarse por fuera del tablero. */
+  const R0=n=>33+77*Math.sqrt(n)/Math.sqrt(max);
+  const area=o.reduce((s,x)=>s+Math.PI*Math.pow(R0(x[1])+4,2),0);
+  let f=Math.min(1,Math.sqrt(.42*ARB_W*H/area)),p;
+  for(let intento=0;intento<8;intento++,f*=.9){
+    const fz=f; p=arbColoca(o,n=>Math.round(R0(n)*fz),H);
+    if(p.every(q=>q.x>0))break;
   }
   return `<div class="arb-escena arb-bur" style="width:${ARB_W}px;height:${H}px">`+
     p.filter(q=>q.x>0).map(q=>{
@@ -284,15 +305,26 @@ function pintaArbol(T){
     .map(([k,t])=>`<button type="button" class="sug${arbForma===k?" on":""}" data-f="${k}">${t}</button>`).join("")+
     `<button type="button" class="sug acc" id="vzArbProy">Proyectar en otra ventana</button>`;
   man.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{arbForma=b.dataset.f;pinta()});
-  const pr=$v("#vzArbProy"); if(pr)pr.onclick=()=>arbProyecta(o);
+  const pr=$v("#vzArbProy"); if(pr)pr.onclick=arbProyecta;
   caja.innerHTML=arbDibuja(o,false);
   arbEncaja(caja);
-  window.__arbUlt=o;
+  arbUlt=o;
+  arbRepintaVentana();   // la ventana aparte sigue a los datos nuevos y a la forma elegida
 }
 addEventListener("resize",()=>{const c=$v("#vzArbol"); if(c&&c.offsetParent)arbEncaja(c)});
 
-/* ventana aparte, solo con el árbol, para proyectar */
-function arbProyecta(o){
+/* ventana aparte, solo con el árbol, para proyectar. Se redibuja en cada refresco del panel. */
+let arbUlt=[],arbVentana=null;
+function arbRepintaVentana(){
+  const w=arbVentana; if(!w||w.closed)return;
+  const c=w.document&&w.document.getElementById("caja"); if(!c)return;
+  c.innerHTML='<p class="arb-tit">Quién habló en la Junta de Juntas</p>'+arbDibuja(arbUlt,true);
+  const e=c.querySelector(".arb-escena"); if(!e)return;
+  const k=Math.min((w.innerWidth-60)/ARB_W,(w.innerHeight-120)/(e.offsetHeight||600),2.2);
+  e.style.transform="scale("+Math.max(.3,k)+")"; e.style.transformOrigin="top center";
+  c.style.height=Math.ceil((e.offsetHeight||600)*Math.max(.3,k)+20)+"px";
+}
+function arbProyecta(){
   const w=window.open("","arbolVoz","width=1600,height=900");
   if(!w){alert("El navegador bloqueó la ventana. Permita las ventanas emergentes para esta página.");return}
   const css=[...document.querySelectorAll("style")].map(s=>s.textContent).join("\n");
@@ -309,16 +341,9 @@ function arbProyecta(o){
    '.arb-bur .et{font-size:12px;color:#B9D2DF}'+
    '</style></head><body><div id="v-voz"><div class="arb-marco" id="caja"></div></div></body></html>');
   w.document.close();
-  window.__arbRepinta=()=>{
-    const c=w.document&&w.document.getElementById("caja"); if(!c)return;
-    c.innerHTML='<p class="arb-tit">Quién habló en la Junta de Juntas</p>'+arbDibuja(o,true);
-    const e=c.querySelector(".arb-escena"); if(!e)return;
-    const k=Math.min((w.innerWidth-60)/ARB_W,(w.innerHeight-120)/(e.offsetHeight||600),2.2);
-    e.style.transform="scale("+Math.max(.3,k)+")"; e.style.transformOrigin="top center";
-    c.style.height=Math.ceil((e.offsetHeight||600)*Math.max(.3,k)+20)+"px";
-  };
-  setTimeout(window.__arbRepinta,160);
-  w.addEventListener("resize",()=>setTimeout(window.__arbRepinta,80));
+  arbVentana=w;
+  setTimeout(arbRepintaVentana,160);
+  w.addEventListener("resize",()=>setTimeout(arbRepintaVentana,80));
 }
 
 
@@ -364,6 +389,7 @@ D(2,"Carolina","Caja de compensación","brechas","hogares","Cruzar nuestros dato
 let datos=[],modo="prueba",ultimaDemo=null,ult=null,filMom=0,filPal=null,reserva=RESERVA.slice();
 const $v=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const vistasMuro=new Set();
 const hora=d=>d.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"});
 
 function estado(){const e=$v("#vzEstado");e.className="vz-estado "+modo;
@@ -480,7 +506,11 @@ function pinta(){
       if(d.audio)cuerpo+=`<span class="audio">${MIC} transcrita de su nota de voz</span>`;
       pills=(palN[d.palanca]?`<span class="pill g">${esc(palN[d.palanca])}</span>`:`<span class="pill bad">sin palanca</span>`)+(secN[d.sector]?`<span class="pill g">${esc(secN[d.sector])}</span>`:"")+
         `<span class="pill ${d.validada?"ok":"az"}">${d.validada?"validada":"ubicada por IA"}</span>`}
-    return`<article class="vz-voz m${+d.momento}"><div class="meta" style="padding:0;margin:0"><span class="tema">${MOM[d.momento]||""}</span>${pills}</div>${cuerpo}<div class="quien2"><b>${esc(d.nombre)}</b> · ${esc(d.organizacion)}</div></article>`}).join("")
+    /* solo entra con animación la tarjeta nueva (o la que acaba de ser ubicada),
+       no todas en cada refresco */
+    const clave=[d.momento,d.nombre,d.organizacion,d.procesando?1:0,String(d.texto||"").slice(0,60)].join("|");
+    const nueva=!vistasMuro.has(clave);vistasMuro.add(clave);
+    return`<article class="vz-voz m${+d.momento}${nueva?" nueva":""}"><div class="meta" style="padding:0;margin:0"><span class="tema">${MOM[d.momento]||""}</span>${pills}</div>${cuerpo}<div class="quien2"><b>${esc(d.nombre)}</b> · ${esc(d.organizacion)}</div></article>`}).join("")
     :"<p class='vz-vacio'>Todavía no hay voces en este filtro.</p>";
 }
 

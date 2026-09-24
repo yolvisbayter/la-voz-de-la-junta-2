@@ -145,6 +145,7 @@ textarea{margin-top:8px}
 const CONFIG={
   url:"https://script.google.com/macros/s/AKfycbyGne7zqC6WsRhywjNrPFvM1GsaRNVbkY_5feZUfxIo1v6_zJseTKpN5iVygE64d7zJ/exec",            // URL del Apps Script (termina en /exec). Vacía = modo de prueba (no guarda).
   maxSeg:60,         // duración máxima de cada nota de voz
+  esperaSeg:90,      // si el servidor no responde en este tiempo, la respuesta pasa a la cola y se reintenta
   /* ---- Responsable del tratamiento (Ley 1581 de 2012) ----
      Datos tomados de cccartagena.org.co/es/proteccion-de-datos-personales.
      Si cambian, se corrigen aquí y el texto de autorización se actualiza solo. */
@@ -281,19 +282,33 @@ let colaMem=[];
 function cola(){return ls.get("vozCola",null)||colaMem}
 function guardaCola(c){colaMem=c;ls.set("vozCola",c)}
 function pintaPend(){const n=cola().length;$("#pend").hidden=!n;$("#pend").textContent=n?`${n} respuesta${n>1?"s":""} pendiente${n>1?"s":""} de envío por la conexión. Se reintenta sola; no cierre esta página.`:""}
+/* Solo cuenta como enviada si el servidor responde {ok:true}. Cualquier otra cosa —un error,
+   una página de Google en vez de JSON, o nada después de CONFIG.esperaSeg— deja la respuesta
+   en la cola. Reenviar no duplica: el servidor descarta las repetidas por su id. */
 async function mandar(p){
   if(!CONFIG.url){await new Promise(r=>setTimeout(r,600));console.log("[modo prueba]",p.nombre,Object.keys(p));return true}
-  const body=JSON.stringify(p);
-  try{const r=await fetch(CONFIG.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body});
-    const j=await r.json().catch(()=>null);if(j&&j.ok)return true;if(j&&j.error)throw new Error(j.error);return r.ok}
+  const ctl=window.AbortController?new AbortController():null;
+  const t=ctl?setTimeout(()=>ctl.abort(),CONFIG.esperaSeg*1000):0;
+  try{const r=await fetch(CONFIG.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(p),signal:ctl?ctl.signal:undefined});
+    const j=await r.json().catch(()=>null);return !!(j&&j.ok)}
   catch(e){
-    if(e&&e.message&&!/fetch|network|load|cors/i.test(e.message))return false;
-    try{await fetch(CONFIG.url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body});return true}catch(e2){return false}
+    /* Error de red o de CORS. Si el mismo envío falla así tres veces, puede ser que el
+       navegador no deje leer la respuesta: se manda sin leerla (no-cors) como respaldo. */
+    if(e&&e.name==="AbortError")return false;
+    p._fallasRed=(p._fallasRed||0)+1;
+    if(p._fallasRed<3)return false;
+    try{await fetch(CONFIG.url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(p)});return true}catch(e2){return false}
   }
+  finally{clearTimeout(t)}
 }
 let vaciando=false;
-async function vaciar(){if(vaciando)return;vaciando=true;let c=cola();while(c.length){if(!(await mandar(c[0])))break;c=cola().slice(1);guardaCola(c)}vaciando=false;pintaPend()}
-setInterval(vaciar,15000);
+async function vaciar(){if(vaciando)return;vaciando=true;let c=cola();
+  while(c.length){
+    if(!(await mandar(c[0]))){const d=cola();if(d.length&&d[0].id===c[0].id){d[0]=c[0];guardaCola(d)}break}  /* guarda el conteo de fallas */
+    c=cola().slice(1);guardaCola(c)}
+  vaciando=false;pintaPend()}
+/* reintento cada 10 a 20 s, al azar, para que los teléfonos que fallaron juntos no vuelvan a llegar juntos */
+(function reintenta(){setTimeout(()=>{vaciar().finally(reintenta)},10000+Math.random()*10000)})();
 
 $("#form").onsubmit=async e=>{
   e.preventDefault();const err=$("#err");err.textContent="";

@@ -69,9 +69,12 @@ Los detalles están en `LEEME_montaje.md`.
 Desde el editor de Apps Script:
 
 - `verificarClaves()` — confirma que las dos claves responden y con qué modelo.
-- `pruebaCarga200()` — simula 200 envíos (408 voces) y mide cuánto tarda el sistema completo.
+- `pruebaCarga200()` — simula 200 envíos (408 voces) y mide cuánto tarda el procesamiento. Escribe directo en la bandeja, así que **no** prueba la recepción.
+- `pruebaRecepcion100()` — manda 100 envíos simultáneos a la aplicación web publicada, pasando por `doPost`, y dice cuántos entraron bien. Necesita la propiedad del script `URL_EXEC` con la dirección que termina en `/exec`.
 - `borrarPruebas()` — deja la hoja limpia después de la simulación.
 - `reintentarErrores()` — devuelve a la cola las filas que quedaron en error.
+
+Después de pegar una versión nueva de `Codigo.gs`, hay que publicarla: *Implementar → Gestionar implementaciones → editar (lápiz) → Versión: Nueva versión*. Así la dirección `/exec` no cambia. Si solo se guarda, el formulario sigue hablando con la versión anterior.
 
 ## Datos personales
 
