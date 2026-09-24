@@ -3,9 +3,22 @@
 Registro paso a paso de lo que se hizo sobre el repositorio `la-voz-de-la-junta-2` la víspera de la Junta de Juntas (viernes 25).
 
 - Rama: `claude/practical-hopper-brypwz`
-- Commits:
+- Commits (del más viejo al más nuevo):
   - `54be518` — Corrige fallas de la auditoría antes del evento
   - `69dd5eb` — Quita del formulario el aviso público y la autorización completa
+  - `fd551f3` — Agrega el registro paso a paso de la auditoría del 24 de septiembre
+  - `cff1a8e` — Backend v3: motor liviano, respaldo desde el panel y operación
+  - `e856779` — Formulario v3: cola en IndexedDB, modo ensayo y grabación robusta
+  - `e987496` — Panel v3: versión independiente, estado del motor y operación
+  - `63877ae` — Cartel QR validado, catálogo de logos y sigla repetida
+  - `e2cae33` — Pruebas automáticas: script único y GitHub Actions
+  - `fdc35e7` — Documentación v3: montaje, guía del día, mapa del sistema
+  - `98ed99a` — Revisión final: respaldo no-cors más seguro, operador estable, WebKit
+  - `4b59649` — Sonda bajo saturación, .nojekyll y cuentas de pruebas al día
+  - `7723aa3` — Panel: una fuente mal escrita avisa en vez de mostrar datos de prueba
+  - `d22824b` — Pruebas: la verificación del panel armado compara contra el disco
+  - `726c16c` — Recepción más liviana: sin búsqueda en Drive por cada envío
+  - (este mismo commit) — Registro de la auditoría al día
 
 ---
 
