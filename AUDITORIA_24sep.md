@@ -155,3 +155,117 @@ Los datos del responsable (`entidadLegal`, `direccion`, `telefono`, `pqrsdUrl`, 
 - Si se vuelve a mostrar algún texto de autorización, o al menos un enlace a la política de datos.
 
 **Después del evento (fase 2):** el hallazgo 14 (`build.py`) y los menores, del 15 al 22. El 13 (bloqueo) ya quedó resuelto con el candado real.
+
+---
+
+## Paso 11. La noche del jueves: versión 3
+
+Pedido: rehacer y mejorar todo el sistema durante la noche, cubriendo cualquier inconveniente que pudiera surgir en el evento, con todo listo a las 6 de la mañana.
+
+**Criterio:** reforzar lo que ya funcionaba, no reescribirlo desde cero. Se mantuvieron la dirección `/exec`, las columnas de la hoja, los parámetros del panel y el formato del envío. Así, cualquier combinación de piezas viejas y nuevas sigue funcionando, y volver atrás toma dos minutos. El conocimiento de clasificación (palancas, términos, desempates, ejemplos y prompt) quedó **idéntico**; se comprobó comparando uno por uno.
+
+### 11.1 Backend (`apps_script/Codigo.gs` v3)
+
+1. **Tope diario de Google.** Con el disparador de cada minuto leyendo la hoja en cada vuelta, una cuenta personal (90 minutos al día de disparadores) podía quedarse sin ejecuciones en pleno evento. Ahora el formulario deja una señal al enviar y el motor guarda cuántas filas quedan pendientes. Sin trabajo, el disparador sale sin tocar Drive ni la hoja. Cada 10 minutos igual revisa todo.
+2. **Motor de respaldo.** Nuevas acciones de la aplicación web, todas con la clave del panel: `accion=procesar`, `accion=estado` y `accion=reintentar`. El disparador deja un latido; si el latido se detiene y hay trabajo, el panel pide el proceso.
+3. **Tope de 6 minutos.** Antes de cada llamada a Gemini se revisa que alcance el tiempo. Una ejecución nunca se acerca al límite de Apps Script, que la cortaría a mitad de camino.
+4. **Filas según el encabezado real.** Si el equipo agrega una columna, nada se corre. Las columnas nuevas (`enviado`) se agregan al final, solas, y la hoja crece sola si le faltan filas.
+5. **Tanda de clasificación repartida.** Si la IA no puede con las 20 respuestas de una tanda (vacía, ilegible, incompleta o bloqueada por una sola respuesta), se reparten de a una en la misma ejecución.
+6. **Casos del día real:**
+   - nota inaudible: queda marcada `(inaudible)` y no se queda «procesando» para siempre;
+   - ficha dañada: va a una carpeta de cuarentena, no a la papelera;
+   - reenvío del mismo teléfono: no duplica audios;
+   - clave de Gemini inválida: no gasta intentos y queda registrada;
+   - tipo de audio: se normaliza aunque Drive diga `video/webm`;
+   - `ocultar` y palanca validada: valen aunque se escriban a mano de cualquier forma («TRUE», «sí», «Reglas claras»);
+   - respuesta sin contenido: queda en `sin respuesta`, en vez de `pendiente` para siempre;
+   - hora del teléfono: se guarda en `enviado`.
+7. **Funciones de operación:** `diagnostico()`, `procesarAhora()`, `activarMotor()`, `pausarMotor()`, `archivarEnsayo()`, `probarTranscripcion()` y `revisarDuplicados()`. `borrarPruebas()` borra por bloques y no falla aunque todas las filas sean de prueba.
+8. `apps_script/appsscript.json` de referencia.
+
+### 11.2 Formulario (`index.html` v3)
+
+1. **Cola en IndexedDB.** Cada respuesta se guarda en el teléfono antes de enviarse y se borra solo cuando el servidor confirma. Antes estaba en `localStorage`, donde dos notas de voz de iPhone podían no caber, y entonces se perdían al cerrar la página. Lo pendiente de la versión anterior se migra y se envía.
+2. **Tiempo de espera según el tamaño.** Con audio espera más, para que una red lenta pero viva alcance a subirlo en vez de cortarse y volver a empezar. Reintenta al volver la conexión y al volver a la página, y avisa antes de cerrar con respuestas pendientes.
+3. **Modo ensayo** (`?ensayo=1`): id `prueba-`, no bloquea el teléfono. **Ronda:** la marca de «ya respondió» vale por evento, así que los teléfonos del ensayo del jueves pueden responder el viernes. `?reiniciar=1` quita la marca.
+4. **Grabación:**
+   - sin doble arranque;
+   - una grabación fallida no borra la anterior;
+   - se guarda lo grabado si el micrófono se corta (una llamada) o la persona sale de la página;
+   - si la persona negó el permiso, no se le vuelve a pedir;
+   - aviso para navegadores de otras apps (WhatsApp, Instagram);
+   - reducción de ruido del micrófono.
+5. Límites de largo iguales a los del servidor.
+
+### 11.3 Panel (`panel/` v3)
+
+1. **Panel independiente** `panel/panel.html`: funciona sin el prototipo. Lo arma `build.py` con `plantilla_independiente.html`.
+2. **`build.py`** (hallazgo 14): se detiene con un mensaje claro si el prototipo no calza, y si el último `<script>` es externo pone la vista en un `<script>` propio.
+3. **Barra del operador**, que la sala no ve: latido del motor, cola, errores y última falla de Gemini, con los botones **Procesar ahora** y **Reintentar errores**.
+4. **Datos:**
+   - un pedido a la vez;
+   - respuestas tardías descartadas sin errores;
+   - últimos datos guardados para arrancar sin conexión;
+   - solo redibuja si algo cambió;
+   - aviso de clave incorrecta (hallazgo 19).
+5. **Proyección:**
+   - la pantalla no se apaga (Wake Lock);
+   - atajos 1, 2, 3, P y R;
+   - parámetros `seccion`, `forma`, `rotar`, `proyectar` y `refresco`.
+6. **Nube** (hallazgo 18): cuenta personas, no voces, y ya no inventa palabras para las voces que no traen. Las voces fallidas no salen en el muro.
+7. **CSS:** dos reglas rotas por restos de código borrado. En modo oscuro, el botón «Todo» era marino sobre marino.
+8. **Sigla repetida** (hallazgo 20): Acodrés usa `ACD`.
+9. El hallazgo 22 no era un problema: `--warn` sí está definido en la paleta de `voz.css`.
+
+### 11.4 Cartel y archivos que faltaban
+
+- `carteles_qr.html`:
+  - exige https;
+  - rechaza la dirección del Apps Script o una con `?ensayo`;
+  - avisa si no cargó la librería del QR;
+  - escribe la dirección bajo el QR y deja un enlace para probarla.
+- `LOGOS_de_donde_salieron.md`: el `PLAN.md` lo citaba y no existía. Se generó del catálogo real: 52 con logo, 8 sin logo y por qué. La fuente exacta de cada logo no estaba registrada, y así se dice.
+- `.gitignore`, para no subir el prototipo.
+
+### 11.5 Pruebas automáticas (`tests/`)
+
+- **Simulador de Apps Script**: hoja con límites reales de filas y columnas, detección de fórmulas, Drive, propiedades, caché, candado, disparadores, un Gemini falso y un reloj que se puede adelantar.
+- **63 pruebas**:
+
+  | Parte | Pruebas |
+  | --- | --- |
+  | Backend | 32 |
+  | Formulario, en Chromium con micrófono falso | 13 |
+  | Panel, en Chromium | 15 |
+  | Cartel | 3 |
+
+- `npm test` (`tests/correr_todo.sh`): sintaxis de todo, que `panel/panel.html` esté al día con sus piezas, y las 63 pruebas. `.github/workflows/pruebas.yml` las corre en GitHub en cada envío.
+- En el camino, las pruebas encontraron y se corrigieron:
+  - el mensaje del operador que se borraba en el siguiente refresco;
+  - la nube de demostración vacía;
+  - el botón activo invisible en modo oscuro del panel independiente;
+  - una franja sobrante al proyectar.
+
+### 11.6 Documentación
+
+- `LEEME_montaje.md` reescrito: paso de la v2 a la v3, montaje desde cero y cómo volver atrás.
+- `GUIA_DEL_DIA.md`, nueva: ensayo, operación, «qué hacer si…» y qué funciones se pueden correr durante el evento.
+- `MAPA_DEL_SISTEMA.md`, nuevo: recorrido de una respuesta, archivos, columnas, propiedades, acciones, parámetros, servicios y compatibilidad.
+- `README.md` y `PLAN.md` al día. El `PLAN.md` trae una tabla para decidir qué publicar de la v3 según el tiempo que haya para ensayar.
+
+### 11.7 Lo que no se pudo probar desde aquí
+
+La red de este entorno no llega a `script.google.com`, a Gemini ni al CDN del QR. Por eso quedan para el ensayo de la mañana:
+
+- el Apps Script real, publicado como versión nueva;
+- que Gemini entienda el audio que graba cada teléfono: `probarTranscripcion()` con un Android y un iPhone;
+- el formulario en Safari de iPhone;
+- `pruebaRecepcion100()` contra la dirección real.
+
+### 11.8 Hallazgos de la fase 2, al cierre de la noche
+
+| Hallazgo | Estado |
+| --- | --- |
+| 13 bloqueo, 14 `build.py`, 15 fichas ilegibles, 16 envíos vacíos, 17 hora del teléfono, 18 nube, 19 clave incorrecta, 20 sigla, 21 documentación | Resueltos |
+| 22 `--warn` | No era un problema |
+| 12 texto legal y facturación | Sigue siendo una decisión de la Cámara |

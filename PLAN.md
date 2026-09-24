@@ -1,6 +1,18 @@
 # Plan para el evento — viernes 25 de septiembre de 2026
 
-Estado al miércoles 23 por la noche. El sistema está corriendo, probado con carga y con la autorización de datos resuelta. Falta el ensayo con teléfonos reales.
+Estado al viernes 25 de madrugada. La v2 corre desde el martes. Durante la noche del jueves se preparó la **v3**: el mismo sistema, reforzado contra las fallas que podían aparecer en el evento. Está en la rama `claude/practical-hopper-brypwz`, probada con 63 pruebas automáticas, pero todavía **no está publicada ni ensayada con teléfonos reales**. Ver «Decisión de la mañana».
+
+## Decisión de la mañana: qué publicar
+
+Este plan tiene una regla: **el viernes no se estrena nada que no haya corrido antes con gente real.** La v3 se preparó de noche, así que la regla se cumple solo si se ensaya antes de abrir el formulario. Lo que se recomienda, según el tiempo que haya:
+
+| Pieza | Riesgo de publicarla | Recomendación |
+| --- | --- | --- |
+| **Panel v3** (`panel/panel.html` o el prototipo armado de nuevo) | Bajo: corre solo en el portátil del operador y se ve antes de proyectar. Funciona con el backend v2 o v3 | Usarlo en cualquier caso |
+| **Backend v3** (`Codigo.gs`) | Medio: se probó contra un simulador de Apps Script, no contra Google | Publicarlo si hay **45 minutos** para el ensayo corto de la [guía del día](GUIA_DEL_DIA.md), sección 1 |
+| **Formulario v3** (`index.html`) | Medio: se probó en Chromium, no en Safari de iPhone | Igual: con el ensayo, en un Android y un iPhone |
+
+Si el ensayo muestra cualquier problema, **se vuelve atrás en dos minutos** (ver [LEEME_montaje.md](LEEME_montaje.md), «Volver atrás») y el evento corre con la v2 y el panel v3. Las piezas viejas y las nuevas funcionan juntas en cualquier combinación.
 
 ## Lo que ya funciona
 
@@ -74,11 +86,13 @@ Dos decisiones ya tomadas en el prototipo: el tamaño crece con la **raíz** del
 
 | Qué | Quién | Por qué bloquea |
 | --- | --- | --- |
-| Ensayo con teléfonos reales | Equipo | Es lo único del camino que no se ha probado de punta a punta: grabar desde un celular, en el sitio, con el wifi del sitio |
+| Decidir qué se publica de la v3 | Yolvis | Ver «Decisión de la mañana» |
+| Ensayo con teléfonos reales | Equipo | Es lo único del camino que no se ha probado de punta a punta: grabar desde un celular (Android y iPhone), en el sitio, con el wifi del sitio. `probarTranscripcion()` confirma que Gemini entiende el audio de cada teléfono |
+| Facturación en el proyecto de la clave 1 | Yolvis | Sin ella, el nivel gratuito limita las transcripciones por minuto y Google puede usar los audios. El texto de autorización dice que los datos no se entregan a terceros |
 | Elegir la forma del árbol en el ensayo | Yolvis | Las tres están disponibles en el panel; con pocas organizaciones el ramificado se ve mejor que la pirámide |
 | Los 8 logos que faltan | Yolvis | Opcional. Esas organizaciones salen con su escudo de sigla, que ya se ve bien |
 | Subir los logos al repositorio | — | Después del ensayo. `logos.js` pesa 200 KB y subirlo por el editor web toma varios envíos por partes |
-| Congelar el código | — | El jueves, después del ensayo |
+| Congelar el código | — | Después del ensayo de la mañana |
 
 ## Correcciones de la auditoría del jueves 24
 
@@ -96,13 +110,28 @@ Antes de congelar se corrigió lo que podía fallar en pleno evento:
 
 `pruebaCarga200()` no pasaba por la recepción. Para eso está `pruebaRecepcion100()`, que se corre en el ensayo.
 
+## Versión 3 (madrugada del viernes)
+
+Sobre las correcciones del jueves, la v3 cubre lo que todavía podía parar el sistema en pleno evento. El detalle está en `AUDITORIA_24sep.md`, paso 11.
+
+- **El tope diario de Google.** En una cuenta personal, los disparadores tienen 90 minutos de ejecución al día. Un disparador que corre cada minuto y lee la hoja cada vez podía agotarlo. Ahora, sin trabajo, sale en milisegundos sin tocar Drive ni la hoja.
+- **Motor de respaldo.** Si el disparador se detiene por cualquier razón, el panel lo nota («el disparador no está corriendo») y pide el proceso él mismo. Tiene botones **Procesar ahora** y **Reintentar errores**.
+- **Tope de 6 minutos.** Ninguna ejecución empieza una llamada a Gemini que pueda pasarse del límite.
+- **Una respuesta problemática no frena a las demás.** Si la IA no puede con una tanda de 20, se reparte de a una.
+- **La cola del teléfono** está en IndexedDB: en iPhone, dos notas de voz no cabían en el almacenamiento anterior, y cerrar la página las perdía.
+- **Modo ensayo** (`?ensayo=1`): respuestas marcadas como prueba que no bloquean el teléfono. La marca de «ya respondió» vale por ronda: los teléfonos del ensayo pueden responder el día del evento.
+- **Panel independiente** (`panel/panel.html`): funciona sin el prototipo.
+- **Operación**: `diagnostico()`, `archivarEnsayo()`, `probarTranscripcion()`, `revisarDuplicados()`, `procesarAhora()`, `activarMotor()` y `pausarMotor()`.
+
 ## Protocolo del día
+
+La versión completa, con la tabla de «qué hacer si…», está en la [guía del día](GUIA_DEL_DIA.md).
 
 | Cuándo | Qué |
 | --- | --- |
 | Al pegar el código nuevo | Publicar una **nueva versión** en la misma implementación (*Gestionar implementaciones → editar*) para que la dirección `/exec` no cambie |
-| En el ensayo | `verificarClaves()`, luego `pruebaRecepcion100()` y mirar cuántas entraron bien; después `borrarPruebas()` |
-| Antes de abrir el formulario | `borrarPruebas()` y revisar que la hoja quede solo con el encabezado |
+| En el ensayo | `diagnostico()`, `verificarClaves()`; formulario con `?ensayo=1` desde un Android y un iPhone; `probarTranscripcion()` después de cada uno; `pruebaRecepcion100()` y mirar cuántas entraron bien; después `borrarPruebas()` |
+| Antes de abrir el formulario | `borrarPruebas()`, o `archivarEnsayo()` si quedaron respuestas sin marca de prueba; `diagnostico()` |
 | Durante el evento | **No ordenar ni borrar filas** en la hoja. Para mirar por organización o palanca, usar *Datos → Vistas de filtro*, que no mueven las filas. Corregir solo `*_palanca_validada`, `ocultar`, `estado` y `notas_equipo` |
 | Si una fila queda en error | `reintentarErrores()` |
 
@@ -110,8 +139,12 @@ Antes de congelar se corrigió lo que podía fallar en pleno evento:
 
 | Riesgo | Plan B |
 | --- | --- |
-| El wifi del sitio no aguanta 200 celulares subiendo audio | El formulario guarda en el teléfono y reintenta solo; probar el wifi el jueves y, si falla, invitar a responder escribiendo |
+| El wifi del sitio no aguanta 200 celulares subiendo audio | El formulario guarda en el teléfono antes de enviar y reintenta solo, con más tiempo de espera según el tamaño del audio; si falla, invitar a responder escribiendo o con datos móviles |
 | Gemini se satura | Cuatro modelos de respaldo por etapa; un 503 no gasta intentos y la fila vuelve a la cola |
+| El disparador de cada minuto se detiene (tope diario, error de Google) | El panel lo detecta y procesa como respaldo; `activarMotor()` lo recrea |
+| Gemini no entiende el audio de algún teléfono | Se detecta en el ensayo con `probarTranscripcion()`. Si pasa en el evento, la persona puede escribir, y el equipo ubica a mano con `*_palanca_validada` |
+| GitHub Pages o Apps Script caen | Los teléfonos guardan y reenvían solos. Plan B: el formulario de Jotform de la primera versión (ver la guía del día) |
+| El portátil del panel se reinicia o pierde internet | `panel.html` arranca con los últimos datos guardados y se pone al día solo al volver la conexión |
 | La IA ubica mal una palanca | La columna `*_palanca_validada` manda sobre la de la IA; se corrige en la hoja y el panel se actualiza en 20 segundos |
 | Una palabra sobra en la nube | Se corrige en la hoja y desaparece de la pantalla en el siguiente refresco |
 | Alguien manda dos respuestas saltándose el freno | Se detecta en la hoja por nombre + organización y se oculta con la casilla `ocultar` |
