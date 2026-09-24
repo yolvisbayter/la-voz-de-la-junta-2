@@ -43,15 +43,6 @@ input:focus,textarea:focus{outline:2px solid var(--acc);outline-offset:1px;borde
 .lista audio{height:34px;max-width:100%}
 .consent{display:flex;gap:10px;align-items:flex-start;font-size:14px;color:var(--ink2);margin:0}
 .consent input{width:22px;height:22px;flex:none;margin-top:1px;accent-color:#0D5A60}
-.publico{margin:0 0 12px;padding:11px 13px;border-radius:12px;background:#FFF6E8;border:1.5px solid #F8A432;font-size:14.5px;line-height:1.45;color:#5A3A00}
-.publico b{font-weight:800}
-.hd{margin-top:12px;border-top:1px solid var(--linea);padding-top:10px}
-.hd>summary{cursor:pointer;font-family:Archivo,sans-serif;font-size:13.5px;font-weight:700;color:var(--p1)}
-.hd>summary::marker{color:var(--p1)}
-.hd h3{font-family:Archivo,sans-serif;font-size:13px;letter-spacing:.02em;text-transform:uppercase;color:var(--gris);margin:14px 0 4px}
-.hd p,.hd li{font-size:14px;line-height:1.5;margin:0 0 7px}
-.hd ul{margin:0 0 7px;padding-left:19px}
-.hd a{color:var(--p1)}
 .falta{margin:0 0 10px;padding:11px 13px;border-radius:12px;background:#FFF6E8;border:1.5px solid #F8A432;font-size:14.5px;line-height:1.45;color:#5A3A00}
 .falta b{display:block;margin-bottom:3px;font-weight:700}
 .falta ul{margin:0;padding-left:18px}
@@ -122,9 +113,7 @@ textarea{margin-top:8px}
 
     <section class="caja">
       <h2><span class="n">4</span>Autorización</h2>
-      <div class="publico" id="avisoPublico"></div>
       <div class="consent"><input type="checkbox" id="acepto"><label for="acepto" id="lAcepto"></label></div>
-      <details class="hd"><summary>Ver la autorización completa</summary><div id="hdTexto"></div></details>
     </section>
 
     <div class="falta" id="falta" hidden></div>
@@ -163,46 +152,8 @@ const ls={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}
 if(!CONFIG.url)$("#modoPrueba").hidden=false;
 /* ============ AUTORIZACIÓN DE DATOS (Ley 1581 de 2012) ============
    Este ejercicio es público: lo que la persona diga se proyecta en la sala y
-   entra en los documentos de incidencia. Por eso la autorización lo dice de
-   frente, arriba y en la casilla, y no solo en la letra menuda. */
-const enl=(u,t)=>u?`<a href="${u}" target="_blank" rel="noopener">${t}</a>`:t;
-
-$("#avisoPublico").innerHTML=`<b>Esto es un ejercicio público.</b> Su nombre, su organización y lo que responda se proyectan en la sala durante ${CONFIG.evento} y quedan en los documentos de incidencia que salgan de ella. No escriba ni diga nada que no quiera que se conozca.`;
-
-$("#lAcepto").innerHTML=`Autorizo a ${CONFIG.entidad} a tratar mis datos personales y mi nota de voz para los fines que se describen abajo, y entiendo que mi nombre, mi organización y lo que respondo son <b>públicos</b>.`;
-
-$("#hdTexto").innerHTML=`
-<h3>Quién responde por sus datos</h3>
-<p>${CONFIG.entidadLegal}, responsable del tratamiento. ${CONFIG.direccion}. Teléfono ${CONFIG.telefono}.
-${CONFIG.politicaUrl?`Su política completa está en la ${enl(CONFIG.politicaUrl,"Política de tratamiento de datos personales")}.`:""}</p>
-
-<h3>Qué se recoge</h3>
-<p>Su nombre, su organización, su cargo, la nota de voz o el texto con el que responde las dos preguntas, y la fecha y hora del envío. Nada más: no se pide cédula, ni correo, ni teléfono.</p>
-
-<h3>Para qué</h3>
-<ul>
-<li>Transcribir su nota de voz y ubicar su respuesta en una de las nueve palancas del sistema de inteligencia territorial, con ayuda de una herramienta de inteligencia artificial.</li>
-<li>Proyectar en vivo, durante el evento, su nombre, su organización y lo que respondió.</li>
-<li>Incluir su respuesta, con su nombre y su organización, en los documentos de incidencia de la región ante el Departamento Nacional de Planeación, los ministerios y el Congreso, y en las publicaciones, la página web y las redes de la Cámara.</li>
-<li>Guardar el consolidado como memoria del ejercicio.</li>
-</ul>
-<p>Sus datos no se venden, no se entregan a terceros con fines comerciales ni se usan para enviarle publicidad.</p>
-
-<h3>Sobre la nota de voz</h3>
-<p>La grabación se usa por lo que usted dice, no por cómo suena su voz: se transcribe a texto y se trabaja sobre el texto. <b>No se hace reconocimiento de voz ni ningún tratamiento biométrico</b>, y la grabación no se usa para identificarlo. Los audios quedan en una carpeta de la Cámara con acceso restringido al equipo del ejercicio.</p>
-
-<h3>Es voluntario</h3>
-<p>Participar es libre y voluntario. Puede escribir en vez de grabar, o no participar del todo, y eso no le afecta en nada. Si decide participar, el formulario pide las dos respuestas completas, para que su voz quede bien ubicada.</p>
-
-<h3>Sus derechos</h3>
-<p>Como titular usted puede, en cualquier momento: conocer, actualizar y rectificar sus datos; pedir prueba de esta autorización; ser informado sobre el uso que se les ha dado; revocar la autorización o pedir que sus datos se supriman; y acceder gratuitamente a ellos. Presentar quejas ante la Superintendencia de Industria y Comercio también es su derecho.</p>
-<p>Para ejercerlos, escriba por ${enl(CONFIG.pqrsdUrl,"el canal de PQRSD de la Cámara")} o llame al ${CONFIG.telefono}.</p>
-<p>Si revoca la autorización, su voz sale del panel y no se incluye en los documentos que aún no se hayan publicado. Lo que ya se proyectó en la sala o ya se publicó no se puede deshacer.</p>
-
-<h3>Cuánto tiempo se guardan</h3>
-<p>Mientras dure el ejercicio de incidencia en el Plan Nacional de Desarrollo 2026-2030 y el tiempo adicional que exijan las normas aplicables. Después se conserva el consolidado como memoria del evento.</p>
-
-<p style="margin-top:12px;color:var(--gris);font-size:13px">Al marcar la casilla usted da una autorización previa, expresa e informada, en los términos de la Ley 1581 de 2012 y el Decreto 1074 de 2015. Queda registrada la fecha y hora del envío como prueba de la autorización.</p>`;
+   entra en los documentos de incidencia. Por eso la casilla lo dice de frente. */
+$("#lAcepto").innerHTML=`Autorizo a ${CONFIG.entidad} a tratar mis datos personales y mi nota de voz para los fines de este ejercicio, y entiendo que mi nombre, mi organización y lo que respondo son <b>públicos</b>.`;
 
 /* ============ IDENTIFICACIÓN ============ */
 function pintaYo(){const y=ls.get("vozYo",null);

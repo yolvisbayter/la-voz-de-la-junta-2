@@ -57,7 +57,7 @@ Los logos viven en `panel/logos.js`, con el nombre oficial como clave y una marc
 
 **Habeas data.** Resuelto, y por la vía simple: el ejercicio se declara **público**. Se decidió así porque lo que se recoge no es sensible —nombre, organización, cargo y una respuesta— y porque el propósito mismo del ejercicio es que esas voces se vean: se proyectan en la sala y entran en los documentos de incidencia. Pedir cédula o correo habría agrandado el problema sin agregar nada.
 
-El formulario lo dice de frente, en un recuadro arriba de la casilla: «Esto es un ejercicio público. Su nombre, su organización y lo que responda se proyectan en la sala y quedan en los documentos de incidencia. No escriba ni diga nada que no quiera que se conozca.» Debajo va la autorización completa, desplegable: quién responde por los datos, qué se recoge, para qué, los derechos del titular y cómo ejercerlos por el canal de PQRSD de la Cámara.
+El formulario lo dice en la casilla de autorización: nombre, organización y respuesta son públicos. **Cambio del 24 de septiembre:** se quitaron del formulario el recuadro «Esto es un ejercicio público…» y el texto completo desplegable de la autorización; queda solo la casilla. Lo que se dice abajo sobre la nota de voz y la revocatoria estaba en ese texto completo y ya no se muestra en el formulario.
 
 Dos puntos que valía la pena cubrir y quedaron cubiertos:
 

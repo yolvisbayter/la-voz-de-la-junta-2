@@ -59,7 +59,7 @@ Quien clone este repositorio obtiene **el sistema completo, no los datos**. Las 
 3. En *Propiedades del script*, agregar `GEMINI_API_KEY` (transcripción) y `GEMINI_API_KEY_2` (clasificación). Deben ser de **dos proyectos de Google Cloud distintos**: los límites de Gemini se aplican por proyecto, no por clave, así que dos claves del mismo proyecto comparten cupo y no sirven de nada.
 4. Ejecutar `configurar()` una vez. Crea la hoja `Voces`, la carpeta de audios y la bandeja en Drive, el disparador de cada minuto y la clave del panel (queda en el registro de ejecución).
 5. Implementar como aplicación web, con acceso *Cualquier usuario*. Copiar la dirección que termina en `/exec`.
-6. Pegar esa dirección en `index.html` (`CONFIG.url`) y revisar en el mismo bloque `CONFIG` los datos del responsable del tratamiento: `entidadLegal`, `direccion`, `telefono`, `pqrsdUrl` y `politicaUrl`. De ahí sale el texto de la autorización. Publicar con GitHub Pages.
+6. Pegar esa dirección en `index.html` (`CONFIG.url`) y revisar en el mismo bloque `CONFIG` el nombre del responsable del tratamiento (`entidad`), que es el que aparece en la casilla de autorización. Publicar con GitHub Pages.
 7. Generar el cartel con `carteles_qr.html` e imprimirlo.
 
 Los detalles están en `LEEME_montaje.md`.
@@ -78,9 +78,9 @@ Después de pegar una versión nueva de `Codigo.gs`, hay que publicarla: *Implem
 
 ## Datos personales
 
-**Este es un ejercicio público, y el formulario lo dice de frente.** Lo que la persona responde se proyecta en la sala con su nombre y su organización, y entra en los documentos de incidencia. El aviso aparece arriba de la casilla, no en la letra menuda.
+**Este es un ejercicio público.** Lo que la persona responde se proyecta en la sala con su nombre y su organización, y entra en los documentos de incidencia. La casilla de autorización lo dice: nombre, organización y respuesta son públicos.
 
-El formulario pide autorización previa, expresa e informada (Ley 1581 de 2012 y Decreto 1074 de 2015) antes de enviar, y despliega el texto completo: quién responde por los datos, qué se recoge, para qué, los derechos del titular y cómo ejercerlos. Los datos del responsable —dirección, teléfono, canal de PQRSD, enlace a la política— se editan en un solo lugar, el bloque `CONFIG` de `index.html`, y el texto se arma solo con ellos.
+El formulario pide marcar la casilla de autorización antes de enviar. Desde el 24 de septiembre el formulario ya no muestra el recuadro «Esto es un ejercicio público» ni el texto completo desplegable (quién responde por los datos, qué se recoge, para qué, los derechos del titular y cómo ejercerlos); queda solo la casilla. Los datos del responsable siguen en el bloque `CONFIG` de `index.html` (`entidadLegal`, `direccion`, `telefono`, `pqrsdUrl`, `politicaUrl`), pero hoy el formulario solo usa `entidad`.
 
 Se recogen solo cuatro cosas: nombre, organización, cargo y la respuesta (voz o texto). No se pide cédula, ni correo, ni teléfono.
 
