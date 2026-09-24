@@ -173,8 +173,6 @@ body.proyectar .vz-nube{min-height:340px}
    3. el título de la nube, centrado y en mayúscula
    4. cada botón de momento con su propio color                */
 
-/* 1 · el encabezado se lee como una sola pieza */
-body.proyectar body.proyectar 
 /* 2 · la nube se para sobre el crema, dentro de su caja blanca */
 #v-voz .vz-nube-caja{background:var(--sup);border-color:var(--linea)}
 #v-voz .vz-nube{
@@ -206,10 +204,10 @@ body.proyectar #v-voz .vz-nube-top h2{font-size:19px;letter-spacing:.09em}
 #v-voz #vzMom .m-vision.on{background:var(--p1);border-color:var(--p1);color:#fff}
 #v-voz #vzMom .m-compromiso.on{background:var(--acc);border-color:var(--acc);color:#fff}
 @media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"])   :root:not([data-theme="light"])   :root:not([data-theme="light"]) #v-voz #vzMom .m-todo{color:#EAF1F6;border-color:#EAF1F6}
+  :root:not([data-theme="light"]) #v-voz #vzMom .m-todo{color:#EAF1F6;border-color:#EAF1F6}
   :root:not([data-theme="light"]) #v-voz #vzMom .m-todo.on{background:#EAF1F6;border-color:#EAF1F6;color:#0B3A54}
 }
-:root[data-theme="dark"] :root[data-theme="dark"] :root[data-theme="dark"] #v-voz #vzMom .m-todo{color:#EAF1F6;border-color:#EAF1F6}
+:root[data-theme="dark"] #v-voz #vzMom .m-todo{color:#EAF1F6;border-color:#EAF1F6}
 :root[data-theme="dark"] #v-voz #vzMom .m-todo.on{background:#EAF1F6;border-color:#EAF1F6;color:#0B3A54}
 
 /* logos reales de las organizaciones (logos.js). El escudo de sigla sigue
@@ -257,7 +255,7 @@ body.proyectar #v-voz .vz-hero{padding-top:30px;padding-bottom:34px}
 
 /* ===== lista de organizaciones que hablaron ===== */
 #v-voz .vz-listaorgs{background:var(--sup);border:1px solid var(--linea);border-radius:14px;
-  padding:16px 18px 18px;margin:12px 0 0;box-shadow:var(--sombra)}
+  padding:16px 18px 18px;margin:12px 0 0;box-shadow:var(--sombra,0 6px 22px rgba(7,58,86,.10))}
 #v-voz .vz-orgs-t{font-family:Archivo,sans-serif;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--ink2);margin:0 0 12px}
 #v-voz .vz-listaorgs .vz-esc em{font-family:Archivo,sans-serif;font-style:normal;font-size:11px;font-weight:800;
@@ -298,3 +296,18 @@ body.proyectar #v-voz .vz-hero{padding-top:30px;padding-bottom:34px}
 #v-voz .arb-vacio{color:var(--gris);text-align:center;padding:40px 0;font-size:15px}
 body.proyectar #v-voz .vz-arb-top{display:none}
 body.proyectar #v-voz .vz-arb-caja{background:transparent;border:0}
+
+/* ===== barra del operador: estado del motor y acciones. La sala no la ve. ===== */
+#v-voz .vz-operador{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:0 0 14px;padding:9px 12px;border-radius:10px;
+  font-family:Archivo,sans-serif;font-size:12.5px;line-height:1.35;background:var(--crema);border:1px solid var(--linea);color:var(--ink2)}
+#v-voz .vz-operador[hidden]{display:none}
+#v-voz .vz-operador.aviso{border-color:var(--oro);background:color-mix(in srgb,var(--oro) 14%,var(--sup))}
+#v-voz .vz-operador.mal{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--sup));color:var(--ink)}
+#v-voz .vz-op-txt{flex:1 1 320px}
+#v-voz .vz-op-btns{display:flex;gap:6px}
+#v-voz .vz-op-btns .sug{font-size:12px;padding:5px 11px}
+#v-voz .vz-op-btns .sug:disabled{opacity:.55;cursor:wait}
+#v-voz .vz-op-msg:empty{display:none}
+#v-voz .vz-op-msg{font-weight:700;color:var(--ink)}
+#v-voz .vz-op-atajos{flex-basis:100%;font-size:11px;color:var(--gris)}
+body.proyectar #v-voz .vz-operador{display:none}

@@ -7,11 +7,20 @@ const VOZ_CONFIG={
   url:"",
   token:"",         // clave del panel (Propiedades del script > PANEL_TOKEN)
   refrescoSeg:20,   // cada cuánto se consultan voces nuevas
+  respaldo:true,    // si el disparador de Apps Script deja de correr, el panel pide el proceso
 };
-/* Se puede pasar la fuente en la dirección (?fuente=...&clave=...), pero solo si apunta al Apps Script */
-try{const q=new URLSearchParams(location.search);const f=q.get("fuente");
-  if(f&&/^https:\/\/script\.google\.com\/macros\/s\//.test(f))VOZ_CONFIG.url=f;
-  const k=q.get("clave");if(k)VOZ_CONFIG.token=k}catch(e){}
+/* Parámetros de la dirección:
+     ?fuente=URL_/exec&clave=CLAVE   datos en vivo (la fuente solo se acepta si apunta al Apps Script)
+     &seccion=nube|analisis|arbol    sección con la que abre
+     &forma=piramide|ramas|burbujas  forma del árbol de logos
+     &rotar=30                       en proyección, cambia de sección cada 30 s
+     &proyectar=1                    abre en modo proyección (la pantalla completa se pide con un clic o con P)
+     &refresco=20                    cada cuántos segundos se piden datos nuevos (de 3 a 300) */
+const VOZ_Q=(()=>{try{return new URLSearchParams(location.search)}catch(e){return {get:()=>null}}})();
+try{const f=VOZ_Q.get("fuente");
+  if(f&&/^https:\/\/script\.google\.com\/(a\/macros\/[\w.-]+\/|macros\/)s\/[\w-]+\/(exec|dev)$/.test(f))VOZ_CONFIG.url=f;
+  const k=VOZ_Q.get("clave");if(k)VOZ_CONFIG.token=k;
+  const r=Number(VOZ_Q.get("refresco"));if(r>=3&&r<=300)VOZ_CONFIG.refrescoSeg=r}catch(e){}
 
 const PAL=[["conectividad","Conectividad","t"],["energia","Energía","t"],["agua","Agua","t"],["clima","Clima","t"],["reglas","Reglas claras","e"],["credito","Crédito","e"],["formacion","Formación","e"],["brechas","Brechas","g"],["instituciones","Instituciones","g"]];
 const FAM={t:"Lo que el territorio pone",e:"Lo que mueve a las empresas",g:"Lo que sostiene a la gente"};
@@ -37,14 +46,13 @@ const VACIAS=new Set("para pero como este esta esto esos esas aqui alli donde cu
 const sinTildes=t=>String(t||"").toLowerCase().normalize("NFD").replace(new RegExp("["+String.fromCharCode(768)+"-"+String.fromCharCode(879)+"]","g"),"").trim();
 const palabraOk=w=>w.length>=4&&!VACIAS.has(w)&&/^[a-zñ]+$/.test(w);
 const FAMPAL={conectividad:"t",energia:"t",agua:"t",clima:"t",reglas:"e",credito:"e",formacion:"e",brechas:"g",instituciones:"g"};
-/* si una voz vino antes del vocabulario, se le presta una palabra segun su palanca */
-const PRESTADA={conectividad:"conectividad",energia:"energía",agua:"agua",clima:"clima",reglas:"formalización",credito:"crédito",formacion:"talento",brechas:"empleo",instituciones:"instituciones"};
+/* las palabras de impacto de una voz, sin repetir. La nube muestra solo lo que la gente dijo:
+   si una voz no trae palabras, no se le inventa ninguna. */
 const palabrasDe=d=>{
-  const p=(d.palabras||[]).map(w=>String(w||"").toLowerCase().trim()).filter(w=>palabraOk(sinTildes(w)));
+  const p=(Array.isArray(d.palabras)?d.palabras:[]).map(w=>String(w||"").toLowerCase().trim()).filter(w=>palabraOk(sinTildes(w)));
   const vistas={},fuera=[];
   p.forEach(w=>{const k=sinTildes(w);if(!vistas[k]){vistas[k]=1;fuera.push(w)}});
-  if(fuera.length)return fuera;
-  return PRESTADA[d.palanca]?[PRESTADA[d.palanca]]:[];
+  return fuera;
 };
 /* ===== Las 60 organizaciones invitadas =====
    Cada fila es [nombre oficial, sigla del escudo, otras formas de escribirlo].
@@ -175,7 +183,7 @@ function pintaOrgs(T){
 function nombreOrg(org){const i=buscaOrg(org);return i>=0?ORGS[i][0]:String(org||"")}
 let filPalabra=null;
 let orgAbierta=false;   /* la lista de organizaciones que hablaron, desplegada o no */
-let secAbierta="nube";   // nube | palancas | voces
+let secAbierta=["nube","analisis","arbol"].indexOf(VOZ_Q.get("seccion"))>=0?VOZ_Q.get("seccion"):"nube";   // nube | analisis | arbol
 
 /* ===== ÁRBOL DE LOGOS =====
    Un tablero con las organizaciones que ya hablaron. La Cámara de Comercio va
@@ -186,7 +194,7 @@ let secAbierta="nube";   // nube | palancas | voces
    grande que una con una sola y el tablero se desbalancearía. */
 const ARB_CCC="Cámara de Comercio de Cartagena";
 const ARB_W=1180;
-let arbForma="piramide";
+let arbForma=["piramide","ramas","burbujas"].indexOf(VOZ_Q.get("forma"))>=0?VOZ_Q.get("forma"):"piramide";
 
 function arbDatos(T){
   const c=new Map();
@@ -350,7 +358,8 @@ function arbProyecta(){
 /* DATOS DE PRUEBA — frases inventadas para ver el panel antes del evento.
    Las organizaciones sí son de la lista de invitados, para probar los escudos.
    Ninguna de estas voces es real. */
-const D=(m,n,o,p,s,t,f,a)=>({momento:m,nombre:n,organizacion:o,palanca:p,sector:s,texto:t||"",audio:a!==0,validada:n.length%3===0});
+const DEMO_PAL={conectividad:["puerto","vías"],energia:["energía","tarifas"],agua:["agua","riego"],clima:["clima","adaptación"],reglas:["trámites","formalización"],credito:["crédito","mipyme"],formacion:["talento","bilingüismo"],brechas:["empleo","barrios"],instituciones:["ejecución","coordinación"]};
+const D=(m,n,o,p,s,t,f,a)=>({momento:m,nombre:n,organizacion:o,palanca:p,sector:s,texto:t||"",audio:a!==0,validada:n.length%3===0,palabras:(DEMO_PAL[p]||[]).slice(0,1+n.length%2)});
 const DEMO=[
 D(1,"Laura","ANDI Más País (Seccional Bolívar)","energia","industria","Que Cartagena sea un hub industrial y no solo turístico: con energía confiable, Mamonal puede duplicar su empleo formal."),
 D(1,"Andrés","Puerto de Cartagena","conectividad","comext","Que el puerto se conecte por tren y doble calzada con el interior del país."),
@@ -387,17 +396,24 @@ D(2,"Carolina","Caja de compensación","brechas","hogares","Cruzar nuestros dato
 ];
 
 let datos=[],modo="prueba",ultimaDemo=null,ult=null,filMom=0,filPal=null,reserva=RESERVA.slice();
+let motor=null,firma="",pidiendo=false,ultimoRespaldo=0,respaldando=false,errorClave=false,guardadoEn=null,opMsg={t:0,txt:""};
 const $v=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const vistasMuro=new Set();
 const hora=d=>d.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"});
+const haceTxt=ms=>{const s=Math.max(0,Math.round(ms/1000));return s<90?s+" s":Math.round(s/60)+" min"};
 
-function estado(){const e=$v("#vzEstado");e.className="vz-estado "+modo;
-  e.lastElementChild.textContent=modo==="cargando"?"Conectando…":modo==="vivo"?"En vivo · actualizado "+hora(ult):modo==="caido"?"Sin conexión · mostrando lo último"+(ult?" ("+hora(ult)+")":""):"Datos de prueba · no son respuestas reales";}
+function estado(){const e=$v("#vzEstado");e.className="vz-estado "+(modo==="clave"?"caido":modo);
+  e.lastElementChild.textContent=
+    modo==="cargando"?"Conectando…"+(guardadoEn?" · mostrando lo guardado a las "+hora(guardadoEn):""):
+    modo==="vivo"?"En vivo · actualizado "+hora(ult):
+    modo==="clave"?"Clave del panel incorrecta · revise ?clave= en la dirección":
+    modo==="caido"?"Sin conexión · mostrando lo último"+(ult?" ("+hora(ult)+")":guardadoEn?" guardado ("+hora(guardadoEn)+")":""):
+    "Datos de prueba · no son respuestas reales";}
 
 function pinta(){
   estado();
-  const T=datos, V=datos.filter(d=>!d.procesando&&palN[d.palanca]);
+  const T=datos, V=datos.filter(d=>!d.procesando&&!d.fallida&&palN[d.palanca]);
   const proc=datos.filter(d=>d.procesando).length;
   const F=V.filter(d=>!filMom||+d.momento===filMom);
   const orgs=new Set(T.map(d=>sinTildes(nombreOrg(d.organizacion))).filter(Boolean));
@@ -456,10 +472,13 @@ function pinta(){
     el.classList.toggle("abierta",el.dataset.sec===secAbierta));
 
   // nube de palabras
-  const cuenta={},quienes={},muestra={};
+  /* el tamaño de cada palabra es cuántas PERSONAS la dijeron: quien la dijo en la visión y en el
+     compromiso cuenta una vez */
+  const cuenta={},quienes={},muestra={},personas={};
   F.forEach(d=>palabrasDe(d).forEach(w=>{
-    const k=sinTildes(w);
-    cuenta[k]=(cuenta[k]||0)+1;
+    const k=sinTildes(w),yo=sinTildes(d.nombre)+"|"+sinTildes(nombreOrg(d.organizacion));
+    (personas[k]=personas[k]||new Set()).add(yo);
+    cuenta[k]=personas[k].size;
     // se muestra la forma con tildes si alguien la dijo asi
     if(!muestra[k]||(w.length>=muestra[k].length&&w!==k))muestra[k]=w;
     (quienes[k]=quienes[k]||new Set()).add(nombreOrg(d.organizacion)||"Sin organización");
@@ -494,7 +513,7 @@ function pinta(){
   $v("#vzNubeLimpiar").hidden=!filPalabra;
 
   // muro
-  const FT=T.filter(d=>!filMom||+d.momento===filMom);
+  const FT=T.filter(d=>!d.fallida&&(!filMom||+d.momento===filMom));
   const W=(filPal?F.filter(d=>d.palanca===filPal):FT).slice(-12).reverse();
   $v("#vzMuroT").textContent=filPal?"Las voces · "+palN[filPal]:"Las voces más recientes";
   $v("#vzMuro").innerHTML=W.length?W.map(d=>{
@@ -508,34 +527,132 @@ function pinta(){
         `<span class="pill ${d.validada?"ok":"az"}">${d.validada?"validada":"ubicada por IA"}</span>`}
     /* solo entra con animación la tarjeta nueva (o la que acaba de ser ubicada),
        no todas en cada refresco */
-    const clave=[d.momento,d.nombre,d.organizacion,d.procesando?1:0,String(d.texto||"").slice(0,60)].join("|");
+    const clave=(d.id||[d.momento,d.nombre,d.organizacion].join("|"))+"|"+(d.procesando?1:0)+"|"+String(d.texto||"").slice(0,60);
     const nueva=!vistasMuro.has(clave);vistasMuro.add(clave);
     return`<article class="vz-voz m${+d.momento}${nueva?" nueva":""}"><div class="meta" style="padding:0;margin:0"><span class="tema">${MOM[d.momento]||""}</span>${pills}</div>${cuerpo}<div class="quien2"><b>${esc(d.nombre)}</b> · ${esc(d.organizacion)}</div></article>`}).join("")
     :"<p class='vz-vacio'>Todavía no hay voces en este filtro.</p>";
 }
 
-function cargar(){
-  if(!VOZ_CONFIG.url)return;
-  const cb="vozcb"+Date.now(),s=document.createElement("script");
-  const fin=()=>{try{delete window[cb]}catch(e){window[cb]=undefined}s.remove()};
-  const t=setTimeout(()=>{modo="caido";pinta();fin()},15000);
-  window[cb]=d=>{clearTimeout(t);
-    if(d&&d.ok===false){modo="caido";pinta();fin();console.warn("El panel no pudo leer los datos:",d.error);return}
-    if(d&&Array.isArray(d.voces)){datos=d.voces;modo="vivo";ult=new Date();pinta()}fin()};
-  s.onerror=()=>{clearTimeout(t);modo="caido";pinta();fin()};
-  s.src=VOZ_CONFIG.url+(VOZ_CONFIG.url.includes("?")?"&":"?")+"accion=datos&token="+encodeURIComponent(VOZ_CONFIG.token)+"&callback="+cb+"&_="+Date.now();
+/* ===== Datos en vivo =====
+   JSONP contra el Apps Script. Un pedido a la vez; si la respuesta llega tarde, se descarta sin errores.
+   Los últimos datos buenos quedan guardados en este navegador: si el panel se recarga sin conexión,
+   arranca con ellos. Solo se vuelve a dibujar si algo cambió. */
+const GUARDA="vozPanel:"+VOZ_CONFIG.url;
+function jsonp(params,ms,listo){
+  const cb="vozcb"+Date.now()+Math.floor(Math.random()*1e4),s=document.createElement("script");
+  let hecho=false;
+  const fin=r=>{if(hecho)return;hecho=true;clearTimeout(t);window[cb]=function(){};setTimeout(()=>{try{delete window[cb]}catch(e){}},60000);s.remove();listo(r)};
+  const t=setTimeout(()=>fin(null),ms);
+  window[cb]=d=>fin(d||null);
+  s.onerror=()=>fin(null);
+  s.src=VOZ_CONFIG.url+(VOZ_CONFIG.url.includes("?")?"&":"?")+params+"&token="+encodeURIComponent(VOZ_CONFIG.token)+"&callback="+cb+"&_="+Date.now();
   document.body.appendChild(s);
 }
+function recibir(d,desdeGuardado){
+  const voces=d.voces.filter(v=>v&&typeof v==="object");
+  const f=JSON.stringify(voces);
+  if(d.motor)motor=d.motor;
+  if(f!==firma){firma=f;datos=voces;pinta()}else estado();
+  if(!desdeGuardado){try{localStorage.setItem(GUARDA,JSON.stringify({t:Date.now(),voces:voces}))}catch(e){}}
+}
+function cargar(){
+  if(!VOZ_CONFIG.url||pidiendo)return;
+  pidiendo=true;
+  jsonp("accion=datos",15000,d=>{
+    pidiendo=false;
+    if(d&&d.ok===false){errorClave=/autorizado/.test(String(d.error||""));modo=errorClave?"clave":"caido";estado();pintaOperador();console.warn("El panel no pudo leer los datos:",d.error);return}
+    if(d&&Array.isArray(d.voces)){errorClave=false;modo="vivo";ult=new Date();recibir(d,false);pintaOperador();respaldo();return}
+    modo="caido";estado();pintaOperador();
+  });
+}
+/* Motor de respaldo: si el disparador de Apps Script no late hace más de 2,5 minutos y hay trabajo
+   pendiente, el panel pide el proceso (como mucho una vez por minuto y nunca dos a la vez). */
+function hayTrabajo(){return !!motor&&(motor.pendientes>0||motor.hayFichas||datos.some(d=>d.procesando))}
+function disparadorQuieto(){return !!motor&&(!motor.latido||motor.ahora-motor.latido>150000)}
+function respaldo(forzar){
+  if(!VOZ_CONFIG.url||respaldando||!motor)return;
+  if(!forzar&&(!VOZ_CONFIG.respaldo||!disparadorQuieto()||!hayTrabajo()||Date.now()-ultimoRespaldo<60000))return;
+  respaldando=true;ultimoRespaldo=Date.now();pintaOperador();
+  jsonp("accion=procesar",200000,d=>{respaldando=false;if(d&&d.motor)motor=d.motor;pintaOperador();if(d&&d.ok)setTimeout(cargar,500)});
+}
+function aviso(txt){opMsg={t:Date.now(),txt:txt};pintaOperador()}
+function reintentar(){
+  aviso("Pidiendo el reintento…");
+  jsonp("accion=reintentar",60000,d=>{
+    const n=d&&d.ok?d.devueltas:null;
+    aviso(n==null?"No se pudo pedir el reintento.":n<0?"El motor está ocupado; intente en un minuto.":n+" fila"+(n===1?"":"s")+" devuelta"+(n===1?"":"s")+" a la cola.");
+    if(n>0)respaldo(true)});
+}
+/* Barra del operador: solo en vivo y fuera del modo proyección (la sala no la ve). */
+function pintaOperador(){
+  const el=$v("#vzOperador");if(!el)return;
+  if(!VOZ_CONFIG.url){el.hidden=true;return}
+  el.hidden=false;
+  let txt="",nivel="ok";
+  if(errorClave){txt="La clave del panel no es la correcta. Cópiela del registro de configurar() o de Propiedades del script (PANEL_TOKEN).";nivel="mal"}
+  else if(!motor){txt=modo==="vivo"?"Conectado. (Este Apps Script no informa el estado del motor: publique el Codigo.gs v3.)":"Esperando datos…";nivel=modo==="vivo"?"aviso":"ok"}
+  else{
+    const quieto=disparadorQuieto(),m=motor;
+    const partes=[];
+    partes.push(m.latido?"motor: latido hace "+haceTxt(m.ahora-m.latido):"motor: sin latido del disparador");
+    partes.push(m.pendientes+" en cola");
+    partes.push(m.errores+" con error");
+    if(m.fallo&&m.ahora-m.fallo.cuando<600000)partes.push("última falla de Gemini hace "+haceTxt(m.ahora-m.fallo.cuando)+" ("+m.fallo.codigo+(m.fallo.detalle?": "+String(m.fallo.detalle).slice(0,90):"")+")");
+    txt=partes.join(" · ");
+    if(quieto&&hayTrabajo()){nivel="mal";txt+=" — el disparador no está corriendo: el panel procesa como respaldo"+(respaldando?" (trabajando…)":"")+". Revise con diagnostico() o ejecute activarMotor()."}
+    else if(m.errores>0||(m.fallo&&m.ahora-m.fallo.cuando<300000))nivel="aviso";
+  }
+  el.className="vz-operador "+nivel;
+  el.innerHTML=`<span class="vz-op-txt">${esc(txt)}</span><span class="vz-op-btns">`+
+    (motor?`<button type="button" class="sug" id="vzOpProcesar"${respaldando?" disabled":""}>${respaldando?"Procesando…":"Procesar ahora"}</button>`+
+    `<button type="button" class="sug" id="vzOpReintentar">Reintentar errores</button>`:"")+
+    `</span><span class="vz-op-msg" id="vzOpMsg">${Date.now()-opMsg.t<15000?esc(opMsg.txt):""}</span><span class="vz-op-atajos">Atajos: 1 nube · 2 palancas · 3 árbol · P proyección · R rotar</span>`;
+  const bp=$v("#vzOpProcesar");if(bp)bp.onclick=()=>respaldo(true);
+  const br=$v("#vzOpReintentar");if(br)br.onclick=reintentar;
+}
 
+/* ===== Proyección ===== */
+let wake=null,rotarSeg=Math.max(0,Number(VOZ_Q.get("rotar"))||0),rotarT=null;
+async function pantallaEncendida(){try{if(navigator.wakeLock&&document.visibilityState==="visible"&&!wake){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>{wake=null})}}catch(e){wake=null}}
+function proyectar(on){
+  document.body.classList.toggle("proyectar",on);
+  $v("#vzProy").textContent=on?"Salir de proyección":"Modo proyección";
+  try{if(on&&document.documentElement.requestFullscreen&&!document.fullscreenElement)document.documentElement.requestFullscreen().catch(()=>{});else if(!on&&document.fullscreenElement)document.exitFullscreen().catch(()=>{})}catch(e){}
+  pantallaEncendida();rotacion();pinta();
+}
+function rotacion(){
+  clearInterval(rotarT);rotarT=null;
+  if(!rotarSeg||!document.body.classList.contains("proyectar"))return;
+  const S=["nube","analisis","arbol"];
+  rotarT=setInterval(()=>{secAbierta=S[(S.indexOf(secAbierta)+1)%S.length];pinta()},rotarSeg*1000);
+}
 $v("#vzNubeLimpiar").onclick=()=>{filPalabra=null;pinta()};
-$v("#vzProy").onclick=()=>{const on=document.body.classList.toggle("proyectar");$v("#vzProy").textContent=on?"Salir de proyección":"Modo proyección";pinta();
-  try{if(on&&document.documentElement.requestFullscreen)document.documentElement.requestFullscreen();else if(!on&&document.fullscreenElement)document.exitFullscreen()}catch(e){}};
-document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement&&document.body.classList.contains("proyectar")){document.body.classList.remove("proyectar");$v("#vzProy").textContent="Modo proyección"}});
+$v("#vzProy").onclick=()=>proyectar(!document.body.classList.contains("proyectar"));
+document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement&&document.body.classList.contains("proyectar"))proyectar(false)});
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){pantallaEncendida();cargar()}});
+document.addEventListener("keydown",e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  const t=e.target&&e.target.tagName;if(t==="INPUT"||t==="TEXTAREA"||t==="SELECT")return;
+  const v=$v("#v-voz");if(!v||v.hidden)return;
+  const k=e.key.toLowerCase();
+  if(k==="1"||k==="2"||k==="3"){secAbierta=["nube","analisis","arbol"][+k-1];pinta()}
+  else if(k==="p")proyectar(!document.body.classList.contains("proyectar"));
+  else if(k==="r"){rotarSeg=rotarSeg?0:30;rotacion();aviso(rotarSeg?"Rotación cada 30 s (en proyección).":"Rotación apagada.")}
+});
 
-if(VOZ_CONFIG.url){modo="cargando";pinta();cargar();setInterval(cargar,VOZ_CONFIG.refrescoSeg*1000)}
-else{datos=DEMO.slice();modo="prueba";pinta();
+/* ===== Arranque ===== */
+if(VOZ_CONFIG.url){
+  modo="cargando";
+  try{const g=JSON.parse(localStorage.getItem(GUARDA)||"null");if(g&&Array.isArray(g.voces)){guardadoEn=new Date(g.t);recibir(g,true)}}catch(e){}
+  pinta();pintaOperador();cargar();
+  setInterval(cargar,VOZ_CONFIG.refrescoSeg*1000);
+  setInterval(()=>{pintaOperador();respaldo()},30000);
+  pantallaEncendida();
+}
+else{datos=DEMO.slice();modo="prueba";pinta();pintaOperador();
   // simula el flujo real: llega la nota de voz, se transcribe y se ubica en su palanca
   setInterval(()=>{if(ultimaDemo&&ultimaDemo.procesando){ultimaDemo.procesando=false;pinta();return}
     if(reserva.length){ultimaDemo=Object.assign({},reserva.shift(),{procesando:true});datos.push(ultimaDemo);pinta()}},6000)}
-try{if(new URLSearchParams(location.search).get("vista")==="voz")ver("voz")}catch(e){}
+if(VOZ_Q.get("proyectar")==="1")proyectar(true);
+try{if(VOZ_Q.get("vista")==="voz"&&typeof ver==="function")ver("voz")}catch(e){}
 })();

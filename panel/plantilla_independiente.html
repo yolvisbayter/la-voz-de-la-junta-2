@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>La voz de la Junta · Panel</title>
+<meta name="description" content="Panel en vivo de La voz de la Junta: nube de palabras, palancas, voces y árbol de logos.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+/* ===== Base del panel independiente =====
+   Este archivo lo arma build.py. Reemplaza lo que ponía el prototipo del sistema de inteligencia
+   territorial (tipografía, botones, indicadores, etiquetas), para que el panel funcione solo,
+   sin original.html. La paleta de la Cámara la pone voz.css dentro de #v-voz. */
+:root{--p1:#017C9C;--p1d:#073A56;--p2:#F8A432;--inv:#E0691B;--acc:#E0691B;--oro:#F8A432;
+  --ink:#073A56;--ink2:#3C5B71;--gris:#7A8B98;--fondo:#F3EEE8;--sup:#FFFFFF;--crema:#F6EEE5;--mono:#E4D0BD;--linea:#DCCDBB;
+  --ok:#017C9C;--warn:#E0691B;--bad:#B23A1A}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--fondo:#062C42;--sup:#0B3A54;--ink:#EAF1F6;--ink2:#B6CBD9;--gris:#8AA3B4;--linea:#1F546F}}
+:root[data-theme="dark"]{--fondo:#062C42;--sup:#0B3A54;--ink:#EAF1F6;--ink2:#B6CBD9;--gris:#8AA3B4;--linea:#1F546F}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--fondo);color:var(--ink);font-family:"Source Serif 4",Georgia,serif;font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;min-height:100vh}
+h1,h2,h3,button{font-family:Archivo,"Helvetica Neue",Arial,sans-serif}
+h1{font-size:clamp(28px,4vw,46px);line-height:1.08;font-weight:800;letter-spacing:-.01em;color:#fff}
+h2{font-size:18px;font-weight:800;margin:22px 0 10px;display:flex;align-items:center;gap:8px;color:var(--ink)}
+main{display:block}
+.hero{background:linear-gradient(120deg,#073A56 0%,#0B4A6B 55%,#017C9C 100%);color:#fff}
+.f4{display:grid;grid-template-columns:repeat(4,1fr);height:5px;width:120px;margin-bottom:14px}
+.f4 i:nth-child(1){background:#017C9C}.f4 i:nth-child(2){background:#F8A432}.f4 i:nth-child(3){background:#E4D0BD}.f4 i:nth-child(4){background:#E0691B}
+.ey{font-family:Archivo,sans-serif;font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+.dek{font-size:17px;margin:0}
+.cont{max-width:1280px;margin:0 auto;padding:0 clamp(16px,4vw,48px) 60px}
+.sugs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 6px}
+.sug{font-family:Archivo,sans-serif;font-size:13.5px;font-weight:700;padding:7px 14px;border-radius:99px;border:1.5px solid var(--linea);background:var(--sup);color:var(--ink);cursor:pointer}
+.sug:hover{border-color:var(--p1)}
+.sug.on{background:var(--ink);border-color:var(--ink);color:var(--sup)}
+.kpi{background:var(--sup);border-radius:14px;padding:14px 16px}
+.kpi .num{font-family:Archivo,sans-serif;font-size:36px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.kpi .lab{font-family:Archivo,sans-serif;font-size:12.5px;font-weight:600;color:var(--ink2);margin-top:6px}
+.link{background:none;border:0;color:var(--acc);font-family:Archivo,sans-serif;font-weight:700;font-size:13px;cursor:pointer;padding:4px 0}
+.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.tema{font-family:Archivo,sans-serif;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:var(--ink2);margin-right:2px}
+.pill{font-family:Archivo,sans-serif;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--crema);color:var(--ink2);border:1px solid var(--linea)}
+.pill.g{background:var(--crema);color:var(--ink)}
+.pill.ok{background:var(--p1);border-color:var(--p1);color:#fff}
+.pill.az{background:transparent;color:var(--ink2)}
+.pill.warn{background:var(--oro);border-color:var(--oro);color:#073A56}
+.pill.bad{background:var(--bad);border-color:var(--bad);color:#fff}
+.vz-hero .dek{font-size:17px}
+</style>
+<style>
+/*__VOZ_CSS__*/
+</style>
+<style>
+/* ajustes del panel independiente que van después de voz.css */
+body.proyectar #v-voz{padding-top:0}
+</style>
+</head>
+<body>
+<main>
+<!--__VOZ_HTML__-->
+</main>
+<script>
+/* En el panel independiente la vista de la voz es la única: se muestra de una. */
+document.getElementById("v-voz").hidden=false;
+function ver(){document.getElementById("v-voz").hidden=false}
+</script>
+<script>
+/*__VOZ_JS__*/
+</script>
+</body>
+</html>
