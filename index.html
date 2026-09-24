@@ -80,10 +80,10 @@ textarea{margin-top:8px}
       <h2><span class="n">1</span>¿Quién habla?</h2>
       <div id="yoVista" class="yo" hidden><span><b id="yoNom"></b><span id="yoOrg"></span></span><button type="button" class="link" id="yoCambiar">Cambiar</button></div>
       <div id="yoForm">
-        <label for="nombre">Nombre</label><input type="text" id="nombre" autocomplete="name" required>
-        <label for="org">Organización o gremio</label><input type="text" id="org" list="orgs" autocomplete="off" required>
+        <label for="nombre">Nombre</label><input type="text" id="nombre" autocomplete="name" maxlength="120" required>
+        <label for="org">Organización o gremio</label><input type="text" id="org" list="orgs" autocomplete="off" maxlength="160" required>
         <p class="ayuda" style="margin:4px 0 0">Empiece a escribir y escoja de la lista. Si no aparece, escríbala completa.</p>
-        <label for="rol">Cargo o rol</label><input type="text" id="rol" autocomplete="organization-title" required>
+        <label for="rol">Cargo o rol</label><input type="text" id="rol" autocomplete="organization-title" maxlength="120" required>
       </div>
     </section>
 
@@ -95,7 +95,7 @@ textarea{margin-top:8px}
         <span class="tiempo"></span>
         <div class="lista" hidden><span class="listaTxt"></span><audio controls preload="none"></audio><button type="button" class="link borrar">Borrar</button></div>
       </div>
-      <details style="margin-top:12px"><summary class="escr">Prefiero escribir</summary><textarea aria-label="Su visión por escrito"></textarea></details>
+      <details style="margin-top:12px"><summary class="escr">Prefiero escribir</summary><textarea aria-label="Su visión por escrito" maxlength="3000"></textarea></details>
     </section>
 
     <section class="caja" data-parte="compromiso">
@@ -106,7 +106,7 @@ textarea{margin-top:8px}
         <span class="tiempo"></span>
         <div class="lista" hidden><span class="listaTxt"></span><audio controls preload="none"></audio><button type="button" class="link borrar">Borrar</button></div>
       </div>
-      <details style="margin-top:12px"><summary class="escr">Prefiero escribir</summary><textarea aria-label="Su compromiso por escrito"></textarea></details>
+      <details style="margin-top:12px"><summary class="escr">Prefiero escribir</summary><textarea aria-label="Su compromiso por escrito" maxlength="3000"></textarea></details>
     </section>
 
     <p class="ayuda" id="sinMic" hidden>Este teléfono no permite grabar desde la página. Use «Prefiero escribir» o dicte con el micrófono del teclado.</p>
@@ -134,10 +134,11 @@ textarea{margin-top:8px}
 const CONFIG={
   url:"https://script.google.com/macros/s/AKfycbyGne7zqC6WsRhywjNrPFvM1GsaRNVbkY_5feZUfxIo1v6_zJseTKpN5iVygE64d7zJ/exec",            // URL del Apps Script (termina en /exec). Vacía = modo de prueba (no guarda).
   maxSeg:60,         // duración máxima de cada nota de voz
-  esperaSeg:90,      // si el servidor no responde en este tiempo, la respuesta pasa a la cola y se reintenta
+  esperaSeg:60,      // espera mínima por la respuesta del servidor; con audio se suma tiempo según el tamaño
+  ronda:"junta-2026-09-25",  // la marca de "ya respondió" vale para esta ronda; cambiarla deja responder de nuevo en todos los teléfonos
   /* ---- Responsable del tratamiento (Ley 1581 de 2012) ----
      Datos tomados de cccartagena.org.co/es/proteccion-de-datos-personales.
-     Si cambian, se corrigen aquí y el texto de autorización se actualiza solo. */
+     Hoy el formulario solo muestra `entidad`, en la casilla de autorización. */
   entidad:"la Cámara de Comercio de Cartagena",
   entidadLegal:"Cámara de Comercio de Cartagena",
   direccion:"Manga, Calle 28 No. 27-23, Edificio Seaport 3, Cartagena, Bolívar",
@@ -148,8 +149,16 @@ const CONFIG={
 };
 
 const $=s=>document.querySelector(s);
-const ls={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}};
+const ls={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
+const Q=(()=>{try{return new URLSearchParams(location.search)}catch(e){return {get:()=>null}}})();
+/* ?ensayo=1  respuestas de ensayo: su id empieza por "prueba-" (borrarPruebas() las limpia) y no bloquean el teléfono.
+   ?reiniciar=1  quita la marca de "ya respondió" de este teléfono (para quien probó el formulario). */
+const ENSAYO=Q.get("ensayo")==="1";
+const YA_KEY="vozEnviado:"+CONFIG.ronda;
+if(Q.get("reiniciar")==="1"){ls.del(YA_KEY);ls.del("vozEnviado");try{history.replaceState(null,"",location.pathname+(ENSAYO?"?ensayo=1":""))}catch(e){}}
 if(!CONFIG.url)$("#modoPrueba").hidden=false;
+if(ENSAYO){const n=$("#modoPrueba");n.hidden=false;n.textContent="Modo ensayo: esta respuesta llega al sistema marcada como prueba y se borra con borrarPruebas(). No bloquea el teléfono."}
+
 /* ============ AUTORIZACIÓN DE DATOS (Ley 1581 de 2012) ============
    Este ejercicio es público: lo que la persona diga se proyecta en la sala y
    entra en los documentos de incidencia. Por eso la casilla lo dice de frente. */
@@ -162,54 +171,170 @@ function pintaYo(){const y=ls.get("vozYo",null);
   else{$("#yoVista").hidden=true;$("#yoForm").hidden=false}}
 $("#yoCambiar").onclick=()=>{$("#yoVista").hidden=true;$("#yoForm").hidden=false;$("#nombre").focus()};
 
-/* ============ UNA RESPUESTA POR TELÉFONO ============ */
-const YA_KEY="vozEnviado";
-function yaRespondio(){return !!ls.get(YA_KEY,null)}
+/* ============ UNA RESPUESTA POR TELÉFONO ============
+   Es un freno, no una garantía: sirve para los reenvíos por error. La marca vale solo para
+   CONFIG.ronda, así los teléfonos que se usaron en el ensayo pueden responder el día del evento. */
+function yaRespondio(){return !ENSAYO&&!!ls.get(YA_KEY,null)}
 function mostrarYaRespondio(){
   $("#form").hidden=true;$("#gracias").hidden=false;
   $("#grTxt").textContent="Ya recibimos una respuesta desde este teléfono. Gracias por participar.";
   window.scrollTo(0,0)}
 
+/* ============ COLA DE ENVÍO ============
+   Cada respuesta se guarda en el teléfono ANTES de enviarse y se borra solo cuando el servidor
+   confirma que la recibió. Se guarda en IndexedDB (aguanta dos notas de voz sin problema); si el
+   navegador no lo permite, en localStorage; y si tampoco, en memoria (entonces no se debe cerrar la página). */
+const Cola=(()=>{
+  let db=null,modo="mem";const mem=new Map();
+  const listo=new Promise(res=>{
+    let hecho=false;const fin=()=>{if(!hecho){hecho=true;res()}};
+    try{
+      const r=indexedDB.open("vozJunta",1);
+      r.onupgradeneeded=()=>{try{r.result.createObjectStore("cola",{keyPath:"id"})}catch(e){}};
+      r.onsuccess=()=>{db=r.result;modo="idb";fin()};
+      r.onerror=r.onblocked=()=>fin();
+    }catch(e){fin()}
+    setTimeout(fin,2500);
+  });
+  const tx=(m,f)=>new Promise((res,rej)=>{try{const t=db.transaction("cola",m);const s=t.objectStore("cola");const out=f(s);t.oncomplete=()=>res(out&&out.result);t.onerror=t.onabort=()=>rej(t.error)}catch(e){rej(e)}});
+  const lsCola=()=>ls.get("vozCola2",[])||[];
+  async function todas(){await listo;
+    let l=[];
+    if(db){try{l=await tx("readonly",s=>s.getAll())||[]}catch(e){l=[]}}
+    lsCola().forEach(p=>{if(!l.some(x=>x.id===p.id))l.push(p)});
+    mem.forEach(p=>{if(!l.some(x=>x.id===p.id))l.push(p)});
+    return l.sort((a,b)=>String(a.cliente).localeCompare(String(b.cliente)))}
+  async function poner(p){await listo;
+    if(db){try{await tx("readwrite",s=>s.put(p));mem.delete(p.id);return "idb"}catch(e){}}
+    const c=lsCola().filter(x=>x.id!==p.id).concat([p]);
+    if(ls.set("vozCola2",c)){mem.delete(p.id);return "ls"}
+    mem.set(p.id,p);return "mem"}
+  async function quitar(id){await listo;
+    if(db){try{await tx("readwrite",s=>s.delete(id))}catch(e){}}
+    const c=lsCola();if(c.some(x=>x.id===id))ls.set("vozCola2",c.filter(x=>x.id!==id));
+    mem.delete(id)}
+  async function tiene(id){return (await todas()).some(p=>p.id===id)}
+  /* lo que haya dejado pendiente la versión anterior del formulario también se envía */
+  async function migrar(){const v=ls.get("vozCola",null);if(Array.isArray(v)&&v.length){for(const p of v){if(p&&p.id)await poner(p)}}ls.del("vozCola")}
+  return {todas,poner,quitar,tiene,migrar,soloMemoria:()=>mem.size>0};
+})();
+
+/* Solo cuenta como enviada si el servidor responde {ok:true}. Cualquier otra cosa —un error,
+   una página de Google en vez de JSON, o nada después del tiempo de espera— la deja en la cola.
+   Reenviar no duplica: el servidor descarta las repetidas por su id. */
+const cuerpo=p=>JSON.stringify(p,(k,v)=>k.charAt(0)==="_"?undefined:v);
+async function mandar(p){
+  if(!CONFIG.url){await new Promise(r=>setTimeout(r,600));console.log("[modo prueba]",p.nombre,Object.keys(p));return true}
+  const body=cuerpo(p);
+  /* con audio, más tiempo: 1 s por cada 25 KB, para que una red lenta pero viva alcance a subirlo */
+  const espera=(CONFIG.esperaSeg+Math.ceil(body.length/25000))*1000;
+  const ctl=window.AbortController?new AbortController():null;
+  const t=ctl?setTimeout(()=>ctl.abort(),espera):0;
+  try{const r=await fetch(CONFIG.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body,signal:ctl?ctl.signal:undefined});
+    const j=await r.json().catch(()=>null);return !!(j&&j.ok)}
+  catch(e){
+    /* Error de red o de CORS. Si el mismo envío falla así tres veces, puede ser que el
+       navegador no deje leer la respuesta: se manda sin leerla (no-cors) como respaldo. */
+    if(e&&e.name==="AbortError")return false;
+    if(navigator.onLine===false)return false;
+    p._fallasRed=(p._fallasRed||0)+1;
+    if(p._fallasRed<3)return false;
+    try{await fetch(CONFIG.url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body});return true}catch(e2){return false}
+  }
+  finally{clearTimeout(t)}
+}
+let vaciando=null,otraVez=false,esperandoCola=false,pendientes=0,enviandoForm=false;
+function vaciar(){
+  if(vaciando){otraVez=true;return vaciando}
+  vaciando=(async()=>{
+    do{otraVez=false;
+      const lista=await Cola.todas();
+      for(const p of lista){
+        if(!(await mandar(p))){await Cola.poner(p);break}   /* guarda el conteo de fallas */
+        await Cola.quitar(p.id);
+      }
+    }while(otraVez);
+  })().catch(()=>{}).finally(()=>{vaciando=null;pintaPend()});
+  return vaciando}
+async function pintaPend(){
+  const n=(await Cola.todas()).length;pendientes=n;
+  const el=$("#pend");el.hidden=!n;
+  el.textContent=n?`${n} respuesta${n>1?"s":""} pendiente${n>1?"s":""} de envío por la conexión. Se reintenta sola${Cola.soloMemoria()?"; no cierre esta página":""}.`:"";
+  if(!n&&esperandoCola){esperandoCola=false;$("#grTxt").textContent="Listo: sus respuestas ya llegaron. En un par de minutos quedan transcritas y ubicadas en las palancas del sistema."}
+}
+/* reintento cada 10 a 20 s, al azar, para que los teléfonos que fallaron juntos no vuelvan a llegar juntos */
+(function reintenta(){setTimeout(()=>{vaciar().finally(reintenta)},10000+Math.random()*10000)})();
+addEventListener("online",()=>vaciar());
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")vaciar()});
+addEventListener("beforeunload",e=>{if(pendientes>0){e.preventDefault();e.returnValue=""}});
+
 /* ============ GRABACIÓN (una por pregunta) ============ */
 const MIMES=["audio/webm;codecs=opus","audio/mp4","audio/webm","audio/ogg;codecs=opus"];
 const puedeGrabar=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&window.MediaRecorder&&window.isSecureContext);
+const enApp=/FBAN|FBAV|Instagram|Line\/|WhatsApp|Twitter|TikTok|; wv\)/i.test(navigator.userAgent||"");
+const MSG_MIC="No se pudo usar el micrófono. Revise el permiso del navegador"+(enApp?", o abra este enlace en Safari o Chrome":"")+". También puede escribir su respuesta.";
 const fmt=s=>Math.floor(s/60)+":"+String(Math.floor(s%60)).padStart(2,"0");
 const PARTES={};let grabando=null;
 document.querySelectorAll("[data-parte]").forEach(sec=>{
   const k=sec.dataset.parte,btn=sec.querySelector(".grabar"),lbl=btn.querySelector("span"),txt0=lbl.textContent;
-  const st={audio:null,rec:null,sec,btn};PARTES[k]=st;
-  if(!puedeGrabar){btn.hidden=true;$("#sinMic").hidden=false;sec.querySelector("details").open=true;return}
+  const lista=sec.querySelector(".lista"),reproductor=sec.querySelector("audio"),tiempo=sec.querySelector(".tiempo");
+  const st={audio:null,rec:null,sec,btn,iniciando:false,url:null};PARTES[k]=st;
+  const abrirEscribir=()=>{const d=sec.querySelector("details");if(d)d.open=true};
+  if(!puedeGrabar){btn.hidden=true;$("#sinMic").hidden=false;if(enApp)$("#sinMic").textContent="Este navegador no permite grabar. Abra el enlace en Safari o Chrome, o use «Prefiero escribir».";abrirEscribir();return}
+  const muestra=()=>{lista.hidden=!st.audio;lbl.textContent=st.audio?"Grabar de nuevo":txt0};
+  st.parar=()=>{try{if(st.rec&&st.rec.state==="recording")st.rec.stop()}catch(e){}};
   btn.onclick=async()=>{
-    if(st.rec&&st.rec.state==="recording"){st.rec.stop();return}
+    if(st.rec&&st.rec.state==="recording"){st.parar();return}
+    if(st.iniciando)return;
     if(grabando){$("#err").textContent="Termine primero la otra grabación.";return}
-    $("#err").textContent="";
-    let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:true})}catch(e){$("#err").textContent="No se pudo usar el micrófono. Revise el permiso del navegador o use «Prefiero escribir».";return}
+    $("#err").textContent="";st.iniciando=true;
+    let stream;
+    try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}})}
+    catch(e){
+      /* solo se vuelve a pedir si fallaron las opciones de audio; si la persona negó el permiso, no se le insiste */
+      const reintento=e&&(e.name==="OverconstrainedError"||e.name==="TypeError");
+      try{if(!reintento)throw e;stream=await navigator.mediaDevices.getUserMedia({audio:true})}catch(e2){st.iniciando=false;$("#err").textContent=MSG_MIC;abrirEscribir();return}}
     const mime=MIMES.find(m=>{try{return MediaRecorder.isTypeSupported(m)}catch(e){return false}})||"";
-    try{st.rec=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:{})}catch(e){st.rec=new MediaRecorder(stream)}
-    const chunks=[],t0=Date.now();let timer;grabando=k;
+    try{st.rec=new MediaRecorder(stream,mime?{mimeType:mime,audioBitsPerSecond:32000}:{})}
+    catch(e){try{st.rec=new MediaRecorder(stream)}catch(e2){st.iniciando=false;stream.getTracks().forEach(t=>t.stop());$("#err").textContent=MSG_MIC;abrirEscribir();return}}
+    const chunks=[],t0=Date.now();let timer;grabando=k;st.iniciando=false;
+    /* si el micrófono se corta (una llamada entrante, otra app), se guarda lo grabado */
+    stream.getAudioTracks().forEach(t=>{t.onended=st.parar});
     st.rec.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data)};
-    st.rec.onstop=()=>{clearInterval(timer);grabando=null;$("#err").textContent="";stream.getTracks().forEach(t=>t.stop());
-      const seg=Math.round((Date.now()-t0)/1000),tipo=(st.rec.mimeType||mime||"audio/webm").split(";")[0],blob=new Blob(chunks,{type:tipo});
-      btn.classList.remove("rec");lbl.textContent="Grabar de nuevo";sec.querySelector(".tiempo").textContent="";
-      if(blob.size<800){$("#err").textContent="La grabación quedó vacía. Intente de nuevo.";return}
-      const fr=new FileReader();fr.onload=()=>{st.audio={base64:String(fr.result).split(",")[1],mime:tipo,seg};
-        sec.querySelector(".listaTxt").textContent="Nota de voz lista · "+fmt(seg);sec.querySelector("audio").src=URL.createObjectURL(blob);sec.querySelector(".lista").hidden=false;revisa()};fr.readAsDataURL(blob)};
-    st.rec.start(1000);btn.classList.add("rec");lbl.textContent="Detener";sec.querySelector(".lista").hidden=true;st.audio=null;
-    timer=setInterval(()=>{const s=(Date.now()-t0)/1000;sec.querySelector(".tiempo").textContent=fmt(s)+" / "+fmt(CONFIG.maxSeg);if(s>=CONFIG.maxSeg&&st.rec.state==="recording")st.rec.stop()},250);
+    st.rec.onerror=()=>st.parar();
+    st.rec.onstop=()=>{clearInterval(timer);grabando=null;stream.getTracks().forEach(t=>t.stop());
+      btn.classList.remove("rec");tiempo.textContent="";
+      const seg=Math.max(1,Math.round((Date.now()-t0)/1000)),tipo=(st.rec.mimeType||mime||"audio/webm").split(";")[0],blob=new Blob(chunks,{type:tipo});
+      /* una grabación vacía no borra la anterior */
+      if(blob.size<800){$("#err").textContent="La grabación quedó vacía. Intente de nuevo, o escriba su respuesta.";muestra();revisa();return}
+      const fr=new FileReader();
+      fr.onerror=()=>{$("#err").textContent="No se pudo leer la grabación. Intente de nuevo.";muestra();revisa()};
+      fr.onload=()=>{
+        st.audio={base64:String(fr.result).split(",")[1],mime:tipo,seg};
+        if(st.url)try{URL.revokeObjectURL(st.url)}catch(e){}
+        st.url=URL.createObjectURL(blob);reproductor.src=st.url;
+        sec.querySelector(".listaTxt").textContent="Nota de voz lista · "+fmt(seg);
+        sec.classList.remove("pide");$("#err").textContent="";muestra();revisa()};
+      fr.readAsDataURL(blob)};
+    try{st.rec.start(1000)}catch(e){grabando=null;stream.getTracks().forEach(t=>t.stop());$("#err").textContent=MSG_MIC;abrirEscribir();return}
+    btn.classList.add("rec");lbl.textContent="Detener";lista.hidden=true;
+    timer=setInterval(()=>{const s=(Date.now()-t0)/1000;tiempo.textContent=fmt(s)+" / "+fmt(CONFIG.maxSeg);if(s>=CONFIG.maxSeg)st.parar()},250);
   };
-  sec.querySelector(".borrar").onclick=()=>{st.audio=null;sec.querySelector(".lista").hidden=true;sec.querySelector("audio").removeAttribute("src");lbl.textContent=txt0;revisa()};
-  st.reset=()=>{st.audio=null;sec.querySelector(".lista").hidden=true;sec.querySelector("textarea").value="";lbl.textContent=txt0;revisa()};
+  sec.querySelector(".borrar").onclick=()=>{st.audio=null;reproductor.removeAttribute("src");if(st.url)try{URL.revokeObjectURL(st.url)}catch(e){}st.url=null;muestra();revisa()};
 });
+/* si la persona sale de la página mientras graba (iPhone corta el micrófono), se guarda lo grabado */
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")Object.values(PARTES).forEach(st=>st.parar&&st.parar())});
 
 /* ============ TODOS LOS CAMPOS SON OBLIGATORIOS ============ */
-/* Nada se envía hasta que las cinco cosas estén: nombre, organización, cargo,
-   la visión, el compromiso y la autorización. El botón queda apagado mientras falte algo. */
+/* Nada se envía hasta que estén el nombre, la organización, el cargo, la visión, el compromiso
+   y la autorización. El botón queda apagado mientras falte algo. */
 const ETIQUETA={vision:"su visión: grábela o escríbala",compromiso:"su compromiso: grábelo o escríbalo"};
+const limpio=s=>String(s||"").replace(/\s+/g," ").trim();
 function faltantes(){
   const f=[];
-  if(!$("#nombre").value.trim())f.push(["nombre","su nombre"]);
-  if(!$("#org").value.trim())f.push(["org","su organización o gremio"]);
-  if(!$("#rol").value.trim())f.push(["rol","su cargo o rol"]);
+  if(!limpio($("#nombre").value))f.push(["nombre","su nombre"]);
+  if(!limpio($("#org").value))f.push(["org","su organización o gremio"]);
+  if(!limpio($("#rol").value))f.push(["rol","su cargo o rol"]);
   for(const [k,st] of Object.entries(PARTES)){
     const texto=(st.sec.querySelector("textarea")||{}).value||"";
     if(!texto.trim()&&!st.audio)f.push([k,ETIQUETA[k]]);
@@ -219,53 +344,28 @@ function faltantes(){
 }
 function revisa(){
   const f=faltantes(),caja=$("#falta");
-  $("#enviar").disabled=f.length>0;
+  $("#enviar").disabled=f.length>0||enviandoForm;
   if(!f.length){caja.hidden=true;caja.innerHTML="";return}
   caja.hidden=false;
   caja.innerHTML="<b>Para enviar falta:</b><ul>"+f.map(x=>"<li>"+x[1]+"</li>").join("")+"</ul>";
 }
 ["#nombre","#org","#rol"].forEach(sel=>{$(sel).addEventListener("input",revisa)});
 $("#acepto").addEventListener("change",revisa);
-document.querySelectorAll("[data-parte] textarea").forEach(t=>t.addEventListener("input",revisa));
+document.querySelectorAll("[data-parte] textarea").forEach(t=>t.addEventListener("input",()=>{t.closest("[data-parte]").classList.remove("pide");revisa()}));
 
-/* ============ ENVÍO CON COLA (si la conexión falla, reintenta sola) ============ */
-let colaMem=[];
-function cola(){return ls.get("vozCola",null)||colaMem}
-function guardaCola(c){colaMem=c;ls.set("vozCola",c)}
-function pintaPend(){const n=cola().length;$("#pend").hidden=!n;$("#pend").textContent=n?`${n} respuesta${n>1?"s":""} pendiente${n>1?"s":""} de envío por la conexión. Se reintenta sola; no cierre esta página.`:""}
-/* Solo cuenta como enviada si el servidor responde {ok:true}. Cualquier otra cosa —un error,
-   una página de Google en vez de JSON, o nada después de CONFIG.esperaSeg— deja la respuesta
-   en la cola. Reenviar no duplica: el servidor descarta las repetidas por su id. */
-async function mandar(p){
-  if(!CONFIG.url){await new Promise(r=>setTimeout(r,600));console.log("[modo prueba]",p.nombre,Object.keys(p));return true}
-  const ctl=window.AbortController?new AbortController():null;
-  const t=ctl?setTimeout(()=>ctl.abort(),CONFIG.esperaSeg*1000):0;
-  try{const r=await fetch(CONFIG.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(p),signal:ctl?ctl.signal:undefined});
-    const j=await r.json().catch(()=>null);return !!(j&&j.ok)}
-  catch(e){
-    /* Error de red o de CORS. Si el mismo envío falla así tres veces, puede ser que el
-       navegador no deje leer la respuesta: se manda sin leerla (no-cors) como respaldo. */
-    if(e&&e.name==="AbortError")return false;
-    p._fallasRed=(p._fallasRed||0)+1;
-    if(p._fallasRed<3)return false;
-    try{await fetch(CONFIG.url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(p)});return true}catch(e2){return false}
-  }
-  finally{clearTimeout(t)}
+/* ============ ENVÍO ============ */
+function nuevoId(){
+  if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();
+  const b=new Uint8Array(16);(window.crypto||{getRandomValues:a=>a.map(()=>Math.random()*256|0)}).getRandomValues(b);
+  const h=[...b].map(x=>x.toString(16).padStart(2,"0")).join("");
+  return h.slice(0,8)+"-"+h.slice(8,12)+"-"+h.slice(12,16)+"-"+h.slice(16,20)+"-"+h.slice(20);
 }
-let vaciando=false;
-async function vaciar(){if(vaciando)return;vaciando=true;let c=cola();
-  while(c.length){
-    if(!(await mandar(c[0]))){const d=cola();if(d.length&&d[0].id===c[0].id){d[0]=c[0];guardaCola(d)}break}  /* guarda el conteo de fallas */
-    c=cola().slice(1);guardaCola(c)}
-  vaciando=false;pintaPend()}
-/* reintento cada 10 a 20 s, al azar, para que los teléfonos que fallaron juntos no vuelvan a llegar juntos */
-(function reintenta(){setTimeout(()=>{vaciar().finally(reintenta)},10000+Math.random()*10000)})();
-
 $("#form").onsubmit=async e=>{
   e.preventDefault();const err=$("#err");err.textContent="";
+  if(enviandoForm)return;
   if(yaRespondio()){mostrarYaRespondio();return}
   if(grabando){err.textContent="Detenga la grabación antes de enviar.";return}
-  const nombre=$("#nombre").value.trim(),org=$("#org").value.trim(),rol=$("#rol").value.trim();
+  const nombre=limpio($("#nombre").value),org=limpio($("#org").value),rol=limpio($("#rol").value);
   if(!nombre||!org||!rol){err.textContent="Escriba su nombre, su organización y su cargo.";$("#yoForm").hidden=false;$("#yoVista").hidden=true;$("#nombre").focus();revisa();return}
   const resp={};
   for(const [k,st] of Object.entries(PARTES)){const texto=st.sec.querySelector("textarea").value.trim();
@@ -273,17 +373,26 @@ $("#form").onsubmit=async e=>{
     resp[k]={texto,audio:st.audio}}
   if(!$("#acepto").checked){err.textContent="Para enviar, marque la autorización de datos.";$("#acepto").focus();revisa();return}
   document.querySelectorAll(".caja.pide").forEach(c=>c.classList.remove("pide"));
-  ls.set("vozYo",{nombre,organizacion:org,rol});
-  const id=(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
-  const p={id,nombre,organizacion:org,rol,vision:resp.vision,compromiso:resp.compromiso,consentimiento:true,cliente:new Date().toISOString()};
-  if(CONFIG.url)ls.set(YA_KEY,{id,fecha:p.cliente});
-  $("#enviar").disabled=true;$("#enviar").textContent="Enviando…";
-  const ok=await mandar(p);if(!ok){guardaCola(cola().concat([p]));pintaPend()}
-  $("#enviar").disabled=false;$("#enviar").textContent="Enviar mis respuestas";
-  $("#form").hidden=true;$("#gracias").hidden=false;
-  $("#grTxt").textContent=ok?"En un par de minutos sus respuestas quedan transcritas y ubicadas en las palancas del sistema.":"La conexión está lenta: sus respuestas quedaron guardadas en este teléfono y se enviarán solas.";window.scrollTo(0,0);
+  enviandoForm=true;$("#enviar").disabled=true;$("#enviar").textContent="Enviando…";
+  try{
+    ls.set("vozYo",{nombre,organizacion:org,rol});
+    const id=(ENSAYO?"prueba-":"")+nuevoId();
+    const p={id,nombre,organizacion:org,rol,vision:resp.vision,compromiso:resp.compromiso,consentimiento:true,cliente:new Date().toISOString(),formulario:"3"};
+    if(CONFIG.url&&!ENSAYO)ls.set(YA_KEY,{id,fecha:p.cliente});
+    /* primero queda guardada en el teléfono; después se envía */
+    await Cola.poner(p);
+    if(navigator.onLine!==false)await vaciar();
+    const ok=!(await Cola.tiene(id));
+    esperandoCola=!ok;
+    $("#form").hidden=true;$("#gracias").hidden=false;
+    $("#grTxt").textContent=ok
+      ?(ENSAYO?"Respuesta de ensayo recibida.":"En un par de minutos sus respuestas quedan transcritas y ubicadas en las palancas del sistema.")
+      :"La conexión está lenta: sus respuestas quedaron guardadas en este teléfono y se enviarán solas"+(Cola.soloMemoria()?". No cierre esta página.":".");
+    window.scrollTo(0,0);
+  }finally{enviandoForm=false;$("#enviar").textContent="Enviar mis respuestas";revisa();pintaPend()}
 };
-pintaYo();pintaPend();vaciar();revisa();
+pintaYo();revisa();
+Cola.migrar().then(()=>{pintaPend();vaciar()});
 if(yaRespondio())mostrarYaRespondio();
 </script>
 </body>

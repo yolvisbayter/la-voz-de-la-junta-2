@@ -1,6 +1,6 @@
 /**
  * Pruebas del backend (apps_script/Codigo.gs) sobre el simulador de Apps Script.
- * Correr:  node --test tests/
+ * Correr:  node --test tests/*.test.js
  */
 const test = require('node:test');
 const assert = require('node:assert/strict');
