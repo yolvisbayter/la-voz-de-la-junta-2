@@ -7,7 +7,13 @@ const assert = require('node:assert/strict');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { chromium } = require('playwright');
+const playwright = require('playwright');
+
+/* NAVEGADOR=webkit corre estas pruebas con el motor de Safari (así lo hace GitHub Actions).
+   Las dos que graban con el micrófono falso de Chromium se saltan en WebKit. */
+const NAVEGADOR = process.env.NAVEGADOR || 'chromium';
+const CHROMIUM = NAVEGADOR === 'chromium';
+const soloChromium = CHROMIUM ? test : test.skip;
 
 const RAIZ = path.join(__dirname, '..');
 const EXEC = /script\.google\.com\/macros/;
@@ -22,16 +28,16 @@ test.before(async () => {
   });
   await new Promise(r => servidor.listen(0, '127.0.0.1', r));
   base = 'http://localhost:' + servidor.address().port + '/index.html';
-  const opciones = { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] };
-  if (fs.existsSync('/opt/pw-browsers/chromium')) opciones.executablePath = '/opt/pw-browsers/chromium';
-  navegador = await chromium.launch(opciones);
+  const opciones = CHROMIUM ? { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] } : {};
+  if (CHROMIUM && fs.existsSync('/opt/pw-browsers/chromium')) opciones.executablePath = '/opt/pw-browsers/chromium';
+  navegador = await playwright[NAVEGADOR].launch(opciones);
 });
 test.after(async () => { await navegador.close(); servidor.close(); });
 
 /** Abre el formulario con un servidor simulado. `responde(cuerpo, n)` devuelve lo que contesta el "Apps Script". */
 async function abrir(responde, opciones) {
   opciones = opciones || {};
-  const ctx = opciones.ctx || await navegador.newContext({ viewport: { width: 390, height: 844 }, permissions: ['microphone'] });
+  const ctx = opciones.ctx || await navegador.newContext(Object.assign({ viewport: { width: 390, height: 844 } }, CHROMIUM ? { permissions: ['microphone'] } : {}));
   const p = await ctx.newPage();
   const recibidos = [], errores = [];
   p.on('pageerror', e => errores.push(String(e)));
@@ -108,7 +114,7 @@ test('el servidor devuelve una página de error: queda en el teléfono y se env�
 
 test('si la persona cierra la página con la respuesta pendiente, se envía al volver a abrirla', async () => {
   let caido = true;
-  const ctx = await navegador.newContext({ permissions: ['microphone'] });
+  const ctx = await navegador.newContext(CHROMIUM ? { permissions: ['microphone'] } : {});
   const a = await abrir(() => caido ? [503, 'text/html', 'x'] : [200, 'application/json', '{"ok":true}'], { ctx });
   await llenar(a.p);
   await a.p.click('#enviar');
@@ -181,7 +187,7 @@ test('doble toque en Enviar: un solo envío', async () => {
   await ctx.close();
 });
 
-test('grabar una nota de voz con el micrófono: llega el audio', async () => {
+soloChromium('grabar una nota de voz con el micrófono: llega el audio', async () => {
   const { p, ctx, recibidos, errores } = await abrir();
   await p.fill('#nombre', 'Ana'); await p.fill('#org', 'SIAB'); await p.fill('#rol', 'Gerente');
   await p.click('[data-parte="vision"] .grabar');
@@ -200,7 +206,7 @@ test('grabar una nota de voz con el micrófono: llega el audio', async () => {
   await ctx.close();
 });
 
-test('una grabación nueva que falla no borra la anterior', async () => {
+soloChromium('una grabación nueva que falla no borra la anterior', async () => {
   const { p, ctx } = await abrir();
   await p.click('[data-parte="vision"] .grabar');
   await p.waitForTimeout(1300);
@@ -214,11 +220,12 @@ test('una grabación nueva que falla no borra la anterior', async () => {
   await ctx.close();
 });
 
-test('permiso de micrófono negado: explica y abre la opción de escribir, sin pedirlo dos veces', async () => {
+test('permiso de micrófono negado: explica y abre la opción de escribir, sin pedirlo dos veces', async (t) => {
   const { p, ctx } = await abrir(null, { antes: () => {
     window.__pedidos = 0;
-    navigator.mediaDevices.getUserMedia = () => { window.__pedidos++; return Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })); };
+    if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => { window.__pedidos++; return Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })); };
   } });
+  if (await p.isHidden('[data-parte="vision"] .grabar')) { await ctx.close(); t.skip('este navegador de pruebas no tiene grabación'); return; }
   await p.click('[data-parte="vision"] .grabar');
   await esperar(p, () => /micrófono/.test(document.querySelector('#err').textContent));
   assert.equal(await p.evaluate(() => document.querySelector('[data-parte="vision"] details').open), true);
@@ -226,7 +233,7 @@ test('permiso de micrófono negado: explica y abre la opción de escribir, sin p
   await ctx.close();
 });
 
-test('respaldo no-cors: si el navegador no deja leer la respuesta, a la tercera se manda igual', async () => {
+test('respaldo no-cors: si el navegador no deja leer la respuesta, se manda a ciegas en tres ciclos distintos', async () => {
   const { p, ctx } = await abrir(null, { antes: () => {
     window.__llamadas = [];
     window.fetch = async (u, o) => { window.__llamadas.push(o.mode || 'cors'); if (o.mode === 'no-cors') return new Response(null, { status: 200 }); throw new TypeError('Failed to fetch'); };
@@ -235,7 +242,7 @@ test('respaldo no-cors: si el navegador no deja leer la respuesta, a la tercera 
   await p.click('#enviar');
   await esperar(p, () => !document.querySelector('#gracias').hidden);
   await esperarCola(p, 0, 10000);
-  assert.deepEqual(await p.evaluate(() => window.__llamadas), ['cors', 'cors', 'cors', 'no-cors']);
+  assert.deepEqual(await p.evaluate(() => window.__llamadas), ['cors', 'cors', 'cors', 'no-cors', 'cors', 'no-cors', 'cors', 'no-cors']);
   await ctx.close();
 });
 
@@ -244,5 +251,23 @@ test('los campos tienen el mismo límite de largo que el servidor', async () => 
   assert.equal(await p.getAttribute('#nombre', 'maxlength'), '120');
   assert.equal(await p.getAttribute('#org', 'maxlength'), '160');
   assert.equal(await p.getAttribute('[data-parte="vision"] textarea', 'maxlength'), '3000');
+  await ctx.close();
+});
+
+test('en modo respaldo, si el envío normal vuelve a responder, se confirma por ahí', async () => {
+  const { p, ctx } = await abrir(null, { antes: () => {
+    window.__llamadas = [];
+    window.fetch = async (u, o) => {
+      window.__llamadas.push(o.mode || 'cors');
+      if (o.mode === 'no-cors') return new Response(null, { status: 200 });
+      if (window.__llamadas.filter(x => x === 'cors').length >= 4) return new Response('{"ok":true}', { status: 200 });
+      throw new TypeError('Failed to fetch');
+    };
+  } });
+  await llenar(p);
+  await p.click('#enviar');
+  await esperar(p, () => !document.querySelector('#gracias').hidden);
+  await esperarCola(p, 0, 10000);
+  assert.deepEqual(await p.evaluate(() => window.__llamadas), ['cors', 'cors', 'cors', 'no-cors', 'cors']);
   await ctx.close();
 });

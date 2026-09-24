@@ -234,12 +234,16 @@ async function mandar(p){
     const j=await r.json().catch(()=>null);return !!(j&&j.ok)}
   catch(e){
     /* Error de red o de CORS. Si el mismo envío falla así tres veces, puede ser que el
-       navegador no deje leer la respuesta: se manda sin leerla (no-cors) como respaldo. */
+       navegador no deje leer la respuesta: se manda sin leerla (no-cors) como respaldo.
+       Como a ciegas no se sabe si llegó, se repite en tres ciclos distintos antes de soltarla
+       (el servidor descarta las repetidas); si entretanto el envío normal responde, mejor. */
     if(e&&e.name==="AbortError")return false;
     if(navigator.onLine===false)return false;
     p._fallasRed=(p._fallasRed||0)+1;
     if(p._fallasRed<3)return false;
-    try{await fetch(CONFIG.url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body});return true}catch(e2){return false}
+    try{await fetch(CONFIG.url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body})}catch(e2){return false}
+    p._ciegos=(p._ciegos||0)+1;
+    return p._ciegos>=3;
   }
   finally{clearTimeout(t)}
 }

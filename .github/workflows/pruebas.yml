@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   pruebas:
+    name: Todo (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -23,3 +24,19 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Correr todo
         run: bash tests/correr_todo.sh
+
+  formulario-safari:
+    name: Formulario (WebKit, el motor de Safari)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Instalar Playwright y WebKit
+        run: |
+          npm ci
+          npx playwright install --with-deps webkit
+      - name: Pruebas del formulario en WebKit
+        run: NAVEGADOR=webkit node --test tests/formulario.test.js

@@ -1043,12 +1043,21 @@ function pintaOperador(){
     else if(m.errores>0||(m.fallo&&m.ahora-m.fallo.cuando<300000))nivel="aviso";
   }
   el.className="vz-operador "+nivel;
-  el.innerHTML=`<span class="vz-op-txt">${esc(txt)}</span><span class="vz-op-btns">`+
-    (motor?`<button type="button" class="sug" id="vzOpProcesar"${respaldando?" disabled":""}>${respaldando?"Procesando…":"Procesar ahora"}</button>`+
-    `<button type="button" class="sug" id="vzOpReintentar">Reintentar errores</button>`:"")+
-    `</span><span class="vz-op-msg" id="vzOpMsg">${Date.now()-opMsg.t<15000?esc(opMsg.txt):""}</span><span class="vz-op-atajos">Atajos: 1 nube · 2 palancas · 3 árbol · P proyección · R rotar</span>`;
-  const bp=$v("#vzOpProcesar");if(bp)bp.onclick=()=>respaldo(true);
-  const br=$v("#vzOpReintentar");if(br)br.onclick=reintentar;
+  /* los botones se arman una sola vez; en cada refresco solo cambian los textos,
+     para que un clic justo en ese momento no se pierda */
+  const forma=motor?"con-motor":"sin-motor";
+  if(el.dataset.forma!==forma){
+    el.dataset.forma=forma;
+    el.innerHTML=`<span class="vz-op-txt"></span><span class="vz-op-btns">`+
+      (motor?`<button type="button" class="sug" id="vzOpProcesar">Procesar ahora</button>`+
+      `<button type="button" class="sug" id="vzOpReintentar">Reintentar errores</button>`:"")+
+      `</span><span class="vz-op-msg" id="vzOpMsg"></span><span class="vz-op-atajos">Atajos: 1 nube · 2 palancas · 3 árbol · P proyección · R rotar</span>`;
+    const bp=$v("#vzOpProcesar");if(bp)bp.onclick=()=>respaldo(true);
+    const br=$v("#vzOpReintentar");if(br)br.onclick=reintentar;
+  }
+  el.querySelector(".vz-op-txt").textContent=txt;
+  $v("#vzOpMsg").textContent=Date.now()-opMsg.t<15000?opMsg.txt:"";
+  const bp=$v("#vzOpProcesar");if(bp){bp.disabled=respaldando;bp.textContent=respaldando?"Procesando…":"Procesar ahora"}
 }
 
 /* ===== Proyección ===== */
