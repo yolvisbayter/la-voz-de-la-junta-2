@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Abrir · La voz de la Junta</title>
+<meta name="theme-color" content="#083D42">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Serif+4:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--p1:#0D5A60;--p1d:#083D42;--acc:#F25100;--ink:#12303A;--ink2:#3C5157;--gris:#5A6B6E;--fondo:#F4F7F6;--sup:#FFFFFF;--linea:#CBD9D6}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--p1:#3FA3AA;--p1d:#0B3A3F;--acc:#FF7A3D;--ink:#DDE8E6;--ink2:#B9C9C6;--gris:#93A7A4;--fondo:#0E1D21;--sup:#122428;--linea:#2A4348}}
+:root[data-theme="dark"]{--p1:#3FA3AA;--p1d:#0B3A3F;--acc:#FF7A3D;--ink:#DDE8E6;--ink2:#B9C9C6;--gris:#93A7A4;--fondo:#0E1D21;--sup:#122428;--linea:#2A4348}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fondo);color:var(--ink);font-family:"Source Serif 4",Georgia,serif;font-size:17px;line-height:1.45;-webkit-font-smoothing:antialiased}
+h1,h2,label,button,.ey,input,.ir{font-family:Archivo,"Helvetica Neue",Arial,sans-serif}
+.top{background:#083D42;color:#fff;padding:20px 16px 26px}
+.top>div{max-width:560px;margin:0 auto}
+.f4{display:grid;grid-template-columns:repeat(4,1fr);height:5px;width:120px;margin-bottom:14px}.f4 i:nth-child(1){background:#3FA3AA}.f4 i:nth-child(2){background:#43B77A}.f4 i:nth-child(3){background:#6B8CFF}.f4 i:nth-child(4){background:#FF7A3D}
+.ey{font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#BFE3E5}
+.top h1{margin:6px 0 4px;font-size:26px;line-height:1.1;font-weight:800;letter-spacing:-.01em}
+.top p{margin:0;color:#D6E6E4;font-size:15.5px}
+main{max-width:560px;margin:0 auto;padding:18px 16px 60px}
+.caja{background:var(--sup);border:1px solid var(--linea);border-radius:14px;padding:16px;margin-bottom:14px}
+h2{font-size:17px;font-weight:700;margin:0 0 4px}
+.caja p{font-size:14.5px;color:var(--ink2);margin:0 0 12px}
+.ir{display:inline-flex;align-items:center;justify-content:center;min-height:48px;background:var(--p1d);color:#fff;border:0;border-radius:99px;padding:10px 20px;font-size:15.5px;font-weight:700;text-decoration:none;cursor:pointer}
+.ir:hover{background:var(--acc)}
+label{display:block;font-size:13.5px;font-weight:600;margin:12px 0 5px}
+input{width:100%;font-size:16px;padding:10px 12px;border:1.5px solid var(--linea);border-radius:10px;background:var(--fondo);color:var(--ink)}
+input:focus{outline:2px solid var(--acc);outline-offset:1px;border-color:transparent}
+.nota{font-size:13px;color:var(--gris);margin-top:10px}
+</style>
+</head>
+<body>
+<header class="top"><div>
+  <div class="f4"><i></i><i></i><i></i><i></i></div>
+  <span class="ey">Junta de Juntas · PND 2026–2030</span>
+  <h1>La voz de la Junta</h1>
+  <p>Todo lo que hay que abrir, en un solo lugar.</p>
+</div></header>
+<main>
+  <section class="caja">
+    <h2>Página de captura</h2>
+    <p>El formulario que abre el QR: nombre, organización y las dos preguntas, visión y compromiso.</p>
+    <a class="ir" href="index.html">Abrir captura</a>
+  </section>
+
+  <section class="caja">
+    <h2>Cartel QR</h2>
+    <p>Genera el cartel A4 con el QR que apunta a la página de captura, listo para imprimir.</p>
+    <a class="ir" href="carteles_qr.html">Abrir carteles</a>
+  </section>
+
+  <section class="caja">
+    <h2>Panel en pantalla</h2>
+    <p>El prototipo con la vista «La voz de la Junta». Se genera con <code>panel/build.py</code> y se abre apuntando al Apps Script publicado.</p>
+    <label for="proto">Dirección del prototipo</label>
+    <input id="proto" type="url" placeholder="Sistema_inteligencia_territorial_prototipo_v2.html">
+    <label for="exec">URL del Apps Script <small>(termina en /exec)</small></label>
+    <input id="exec" type="url" placeholder="https://script.google.com/macros/s/…/exec">
+    <label for="clave">Clave del panel <small>(PANEL_TOKEN, si la configuraron)</small></label>
+    <input id="clave" type="password" autocomplete="off">
+    <p class="nota">Las dos direcciones se recuerdan en este navegador; la clave no se guarda.</p>
+    <button class="ir" id="panel" type="button">Abrir panel</button>
+  </section>
+</main>
+<script>
+const P=document.getElementById("proto"),E=document.getElementById("exec"),K=document.getElementById("clave");
+const lee=k=>{try{return localStorage.getItem(k)||""}catch(e){return""}};
+const guarda=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+P.value=lee("voz.proto");E.value=lee("voz.exec");
+P.oninput=()=>guarda("voz.proto",P.value.trim());E.oninput=()=>guarda("voz.exec",E.value.trim());
+document.getElementById("panel").onclick=()=>{
+  const p=P.value.trim()||"Sistema_inteligencia_territorial_prototipo_v2.html",x=E.value.trim();
+  if(!/^https:\/\/script\.google\.com\/macros\/s\//.test(x)){alert("Pegue la URL del Apps Script (https://script.google.com/macros/s/…/exec).");E.focus();return}
+  const k=K.value.trim();
+  window.open(p+(p.includes("?")?"&":"?")+"vista=voz&fuente="+encodeURIComponent(x)+(k?"&clave="+encodeURIComponent(k):""),"_blank","noopener");
+};
+</script>
+</body>
+</html>
