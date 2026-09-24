@@ -1,6 +1,6 @@
 # Plan para el evento — viernes 25 de septiembre de 2026
 
-Estado al viernes 25 de madrugada. La v2 corre desde el martes. Durante la noche del jueves se preparó la **v3**: el mismo sistema, reforzado contra las fallas que podían aparecer en el evento. Está en la rama `claude/practical-hopper-brypwz`, probada con 63 pruebas automáticas, pero todavía **no está publicada ni ensayada con teléfonos reales**. Ver «Decisión de la mañana».
+Estado al viernes 25 de madrugada. La v2 corre desde el martes. Durante la noche del jueves se preparó la **v3**: el mismo sistema, reforzado contra las fallas que podían aparecer en el evento. Está en la rama `claude/practical-hopper-brypwz`, probada con 65 pruebas automáticas, pero todavía **no está publicada ni ensayada con teléfonos reales**. Ver «Decisión de la mañana».
 
 ## Decisión de la mañana: qué publicar
 

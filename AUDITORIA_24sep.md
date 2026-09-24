@@ -180,8 +180,9 @@ Pedido: rehacer y mejorar todo el sistema durante la noche, cubriendo cualquier 
    - `ocultar` y palanca validada: valen aunque se escriban a mano de cualquier forma («TRUE», «sí», «Reglas claras»);
    - respuesta sin contenido: queda en `sin respuesta`, en vez de `pendiente` para siempre;
    - hora del teléfono: se guarda en `enviado`.
-7. **Funciones de operación:** `diagnostico()`, `procesarAhora()`, `activarMotor()`, `pausarMotor()`, `archivarEnsayo()`, `probarTranscripcion()` y `revisarDuplicados()`. `borrarPruebas()` borra por bloques y no falla aunque todas las filas sean de prueba.
-8. `apps_script/appsscript.json` de referencia.
+7. **Saturación larga.** Mientras Gemini siga saturado, cada minuto se prueba con una sonda de 3 notas de voz en vez de 25. Así una saturación de horas no agota el cupo diario de 20.000 llamadas externas de Apps Script. Apenas la sonda sale bien, se vuelve a tandas completas en la misma ejecución.
+8. **Funciones de operación:** `diagnostico()`, `procesarAhora()`, `activarMotor()`, `pausarMotor()`, `archivarEnsayo()`, `probarTranscripcion()` y `revisarDuplicados()`. `borrarPruebas()` borra por bloques y no falla aunque todas las filas sean de prueba.
+9. `apps_script/appsscript.json` de referencia.
 
 ### 11.2 Formulario (`index.html` v3)
 
@@ -230,21 +231,24 @@ Pedido: rehacer y mejorar todo el sistema durante la noche, cubriendo cualquier 
 ### 11.5 Pruebas automáticas (`tests/`)
 
 - **Simulador de Apps Script**: hoja con límites reales de filas y columnas, detección de fórmulas, Drive, propiedades, caché, candado, disparadores, un Gemini falso y un reloj que se puede adelantar.
-- **63 pruebas**:
+- **65 pruebas**:
 
   | Parte | Pruebas |
   | --- | --- |
-  | Backend | 32 |
-  | Formulario, en Chromium con micrófono falso | 13 |
+  | Backend | 33 |
+  | Formulario, en Chromium con micrófono falso; y en WebKit, el motor de Safari, en GitHub Actions (11 pasan y 3 se saltan porque ese WebKit no graba audio) | 14 |
   | Panel, en Chromium | 15 |
   | Cartel | 3 |
 
-- `npm test` (`tests/correr_todo.sh`): sintaxis de todo, que `panel/panel.html` esté al día con sus piezas, y las 63 pruebas. `.github/workflows/pruebas.yml` las corre en GitHub en cada envío.
+- `npm test` (`tests/correr_todo.sh`): sintaxis de todo, que `panel/panel.html` esté al día con sus piezas, y las 65 pruebas. `.github/workflows/pruebas.yml` las corre en GitHub en cada envío.
 - En el camino, las pruebas encontraron y se corrigieron:
   - el mensaje del operador que se borraba en el siguiente refresco;
   - la nube de demostración vacía;
   - el botón activo invisible en modo oscuro del panel independiente;
-  - una franja sobrante al proyectar.
+  - una franja sobrante al proyectar;
+  - el respaldo `no-cors` del formulario, que con un solo envío a ciegas podía perder una respuesta si Google devolvía un error bajo carga: ahora reenvía en tres ciclos distintos;
+  - la barra del operador, que rearmaba sus botones en cada refresco y podía perder un clic.
+- `.nojekyll`: GitHub Pages sirve los archivos tal cual, sin pasarlos por Jekyll.
 
 ### 11.6 Documentación
 

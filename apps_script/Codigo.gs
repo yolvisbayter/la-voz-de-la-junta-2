@@ -57,6 +57,10 @@ const MAX_INTENTOS = 8;  // fallas REALES (audio ilegible, respuesta vacía o in
 // se cuenta un intento, para que una respuesta que siempre falla no quede en cola para siempre.
 const CODIGOS_TRANSITORIOS = [403, 404, 408, 429, 500, 502, 503, 504];
 const TOPE_TRANSITORIOS = 10;
+// Mientras Gemini siga saturado, cada minuto se prueba con pocas notas de voz (una sonda) en vez
+// de la tanda completa: así una saturación larga no agota el cupo diario de llamadas externas de
+// Apps Script (20.000). Apenas una sale bien, se vuelve a la tanda completa.
+const SONDA_AUDIO = 3;
 const REVISION_COMPLETA_MIN = 10;  // aunque no haya señal de trabajo, cada tanto se revisa todo
 const INAUDIBLE = '(inaudible)';   // lo que devuelve la transcripción cuando no se entiende nada
 const MAX_AUDIO_B64 = 20000000;    // ~15 MB de audio; una nota de 60 s pesa menos de 2 MB
@@ -378,13 +382,15 @@ function transcribirTanda_(ctx) {
   if (datos.length < 2) return 0;
   const cab = datos[0], c = n => cab.indexOf(n);
   const jobs = [];
-  for (let r = 1; r < datos.length && jobs.length < LOTE_AUDIO; r++) {
+  const cache = CacheService.getScriptCache();
+  const lote = cache.get('saturado_AUDIO') ? SONDA_AUDIO : LOTE_AUDIO;
+  for (let r = 1; r < datos.length && jobs.length < lote; r++) {
     const f = datos[r];
     if (!f[c('id')]) continue;
     if (String(f[c('estado_ia')]).indexOf('error') === 0) continue;
     if (Number(f[c('intentos')]) >= MAX_INTENTOS) continue;
     for (const p of PARTES) {
-      if (jobs.length >= LOTE_AUDIO) break;
+      if (jobs.length >= lote) break;
       const id = String(f[c('id')]), k = id + ':' + p;
       if (ctx.fallaron[k]) continue;
       if (f[c(p + '_audio_id')] && !f[c(p + '_transcripcion')]) jobs.push({ id: id, p: p, k: k, archivo: String(f[c(p + '_audio_id')]) });
@@ -411,7 +417,11 @@ function transcribirTanda_(ctx) {
   fallas.forEach(j => { ctx.fallaron[j.k] = 1; });
   const reales = fallas.filter(j => j.real);
   const transitorias = fallas.filter(j => !j.real && j.transitoria);
-  if (transitorias.length && !hechos.length) ctx.audio = false;  // Gemini saturado: esperar al siguiente minuto
+  if (hechos.length) cache.remove('saturado_AUDIO');
+  else if (transitorias.length) {
+    ctx.audio = false;  // Gemini saturado: esperar al siguiente minuto, y entonces probar con una sonda
+    cache.put('saturado_AUDIO', '1', 3600);
+  }
   aplicarPorId_(sh, cambios, reales.map(j => j.id).concat(contarTransitorias_(transitorias)));
   return hechos.length;
 }

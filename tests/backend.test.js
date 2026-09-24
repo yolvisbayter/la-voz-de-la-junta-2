@@ -449,3 +449,17 @@ test('carga: 200 personas con audio en las dos preguntas quedan listas', () => {
   assert.equal(e.filas().filter(f => f.estado_ia === 'listo').length, 200);
   assert.ok(vueltas <= 6, 'tardó ' + vueltas + ' minutos');
 });
+
+test('saturación larga: cada minuto se prueba con una sonda, no con la tanda completa', () => {
+  const e = listo();
+  for (let i = 0; i < 30; i++) e.enviar(respuesta({ vision: { audio: { base64: AUDIO, mime: 'audio/webm' } } }));
+  e.S.gemini = () => error(429, 'RESOURCE_EXHAUSTED', 'Quota exceeded');
+  correr(e);  // primer minuto: tanda completa (25 notas x 4 modelos) y clasificación de lo escrito
+  const porMinuto = [];
+  for (let m = 0; m < 5; m++) { const antes = e.S.llamadas.length; correr(e); porMinuto.push(e.S.llamadas.length - antes); }
+  porMinuto.forEach(n => assert.ok(n <= 3 * 4 + 4, 'llamadas en un minuto de saturación: ' + n));
+  // vuelve Gemini: la sonda sale bien y en la misma ejecución sigue con tandas completas
+  e.S.gemini = q => esAudio(q) ? ok('Riego') : clasificadorFalso()(q);
+  correr(e);
+  assert.equal(e.filas().filter(f => f.estado_ia === 'listo').length, 30);
+});
