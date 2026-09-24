@@ -8,16 +8,20 @@
 <style>
 body{margin:0;background:#F4F7F6;color:#12303A;font-family:Archivo,Arial,sans-serif}
 .panel{max-width:760px;margin:0 auto;padding:24px 16px}
-.panel input{width:100%;font:inherit;font-size:16px;padding:10px 12px;border:1.5px solid #CBD9D6;border-radius:10px}
+.panel input{width:100%;font:inherit;font-size:16px;padding:10px 12px;border:1.5px solid #CBD9D6;border-radius:10px;box-sizing:border-box}
 .panel button{margin-top:10px;background:#F25100;color:#fff;border:0;border-radius:10px;padding:11px 18px;font:inherit;font-weight:800;cursor:pointer}
 .panel p{color:#3C5157;font-size:14px}
+.panel .aviso{color:#B23A1A;font-weight:700;min-height:1em}
+.panel .ok{color:#20975A;font-weight:700}
+.panel a{color:#0D5A60;font-weight:700}
 .cartel{width:210mm;height:297mm;margin:16px auto;background:#083D42;color:#fff;padding:22mm 18mm;box-sizing:border-box;display:flex;flex-direction:column;page-break-after:always;break-after:page}
 .f4{display:grid;grid-template-columns:repeat(4,1fr);height:6mm;width:70mm;margin-bottom:12mm}.f4 i:nth-child(1){background:#3FA3AA}.f4 i:nth-child(2){background:#43B77A}.f4 i:nth-child(3){background:#6B8CFF}.f4 i:nth-child(4){background:#FF7A3D}
 .ey{font-size:13pt;letter-spacing:.14em;text-transform:uppercase;color:#BFE3E5;font-weight:700}
 .m{font-size:20pt;font-weight:800;color:#FFB600;margin-top:10mm}
 h1{font-size:40pt;line-height:1.05;margin:4mm 0 8mm;font-weight:800}
-.qr{background:#fff;border-radius:6mm;padding:8mm;align-self:center;margin:4mm 0 8mm}
+.qr{background:#fff;border-radius:6mm;padding:8mm;align-self:center;margin:4mm 0 4mm}
 .qr img,.qr canvas{display:block;width:95mm!important;height:95mm!important}
+.dir{align-self:center;font-size:12pt;color:#D6E6E4;margin:0 0 6mm;word-break:break-all;text-align:center;max-width:170mm}
 .pie{margin-top:auto;font-size:13pt;color:#D6E6E4;line-height:1.4}
 .pie b{color:#fff}
 @media print{body{background:#fff}.panel{display:none}.cartel{margin:0}@page{size:A4;margin:0}}
@@ -26,23 +30,36 @@ h1{font-size:40pt;line-height:1.05;margin:4mm 0 8mm;font-weight:800}
 <body>
 <div class="panel">
   <h2>Cartel QR</h2>
-  <p>Pegue la dirección pública de la página de captura (por ejemplo, la de GitHub Pages) y oprima Generar. Luego imprima con Ctrl+P / Cmd+P en tamaño A4, sin márgenes.</p>
-  <input id="url" placeholder="https://usuario.github.io/voz-junta/">
+  <p>Pegue la dirección pública de la página de captura (la de GitHub Pages, que empieza por https://) y oprima Generar. Pruebe el enlace desde un celular antes de imprimir. Luego imprima con Ctrl+P / Cmd+P en tamaño A4, sin márgenes.</p>
+  <input id="url" placeholder="https://usuario.github.io/la-voz-de-la-junta-2/" inputmode="url" autocomplete="off">
   <button id="gen">Generar carteles</button>
+  <p class="aviso" id="aviso"></p>
+  <p id="probar" hidden></p>
 </div>
 <div id="carteles"></div>
 <script>
 const M=[[0,"Visión y compromiso","¿Qué visión tiene para Cartagena y Bolívar y cuál es su compromiso?"]];
-document.getElementById("gen").onclick=()=>{
-  let u=document.getElementById("url").value.trim();if(!u){alert("Pegue la dirección de la página de captura.");return}
-  const C=document.getElementById("carteles");C.innerHTML="";
+const $=s=>document.querySelector(s);
+try{const g=localStorage.getItem("cartelUrl");if(g)$("#url").value=g}catch(e){}
+$("#gen").onclick=()=>{
+  const aviso=$("#aviso");aviso.textContent="";$("#probar").hidden=true;
+  let u=$("#url").value.trim();
+  if(!u){aviso.textContent="Pegue la dirección de la página de captura.";return}
+  if(!/^https:\/\//i.test(u)){aviso.textContent="La dirección debe empezar por https:// (sin https el celular no deja grabar la voz).";return}
+  if(/[?&](ensayo|reiniciar)=/.test(u)){aviso.textContent="Quite ?ensayo o ?reiniciar de la dirección: el cartel es para el público.";return}
+  if(/script\.google\.com/.test(u)){aviso.textContent="Esa es la dirección del Apps Script. El cartel lleva la de la página de captura (GitHub Pages).";return}
+  if(typeof QRCode==="undefined"){aviso.textContent="No cargó la librería del QR (¿sin internet?). Recargue la página con conexión.";return}
+  try{localStorage.setItem("cartelUrl",u)}catch(e){}
+  const C=$("#carteles");C.innerHTML="";
   M.forEach(([n,m,q])=>{
-    const link=u;
     const d=document.createElement("section");d.className="cartel";
-    d.innerHTML=`<div class="f4"><i></i><i></i><i></i><i></i></div><span class="ey">Junta de Juntas · PND 2026–2030</span><div class="m">${m}</div><h1>${q}</h1><div class="qr"></div><div class="pie"><b>Escanee, escriba su nombre y su organización, y responda las dos preguntas con su voz.</b><br>Su voz entra al mapa de Cartagena y Bolívar que verá en pantalla.</div>`;
+    d.innerHTML=`<div class="f4"><i></i><i></i><i></i><i></i></div><span class="ey">Junta de Juntas · PND 2026–2030</span><div class="m"></div><h1></h1><div class="qr"></div><div class="dir"></div><div class="pie"><b>Escanee, escriba su nombre y su organización, y responda las dos preguntas con su voz.</b><br>Su voz entra al mapa de Cartagena y Bolívar que verá en pantalla.</div>`;
+    d.querySelector(".m").textContent=m;d.querySelector("h1").textContent=q;
+    d.querySelector(".dir").textContent=u.replace(/^https:\/\//i,"");
     C.appendChild(d);
-    new QRCode(d.querySelector(".qr"),{text:link,width:600,height:600,colorDark:"#083D42",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.M});
+    new QRCode(d.querySelector(".qr"),{text:u,width:600,height:600,colorDark:"#083D42",colorLight:"#ffffff",correctLevel:QRCode.CorrectLevel.M});
   });
+  const p=$("#probar");p.hidden=false;p.innerHTML="";const a=document.createElement("a");a.href=u;a.target="_blank";a.rel="noopener";a.textContent="Abrir el enlace para probarlo";p.appendChild(a);
 };
 </script>
 </body>
