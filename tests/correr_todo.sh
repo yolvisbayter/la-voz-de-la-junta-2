@@ -26,13 +26,12 @@ python3 -c 'import json;json.load(open("apps_script/appsscript.json"))'
 echo "  ok"
 
 echo "== 2. El panel armado está al día con sus piezas"
+cp panel/panel.html "$tmp/panel_antes.html"
 python3 panel/build.py
-if command -v git >/dev/null && git rev-parse --git-dir >/dev/null 2>&1; then
-  if ! git diff --quiet -- panel/panel.html; then
-    echo "  ERROR: panel/panel.html cambió al armarlo: alguien editó voz.js, voz.css, voz.html o logos.js sin correr build.py."
-    echo "  Solución: correr python3 panel/build.py y subir panel/panel.html."
-    exit 1
-  fi
+if ! cmp -s "$tmp/panel_antes.html" panel/panel.html; then
+  echo "  ERROR: panel/panel.html no estaba al día: alguien editó voz.js, voz.css, voz.html o logos.js sin correr build.py."
+  echo "  Ya se regeneró. Súbalo junto con el cambio."
+  exit 1
 fi
 echo "  ok"
 
