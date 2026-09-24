@@ -34,7 +34,7 @@ Las dos etapas usan **claves de proyectos de Google Cloud distintos**, para que 
 | `panel/plantilla_independiente.html` | Base del panel independiente. |
 | `apps_script/appsscript.json` | Manifiesto de referencia del proyecto de Apps Script. |
 | `carteles_qr.html` | Generador del cartel A4 con el QR. Se abre en el navegador, se pega la dirección pública y se imprime. |
-| `tests/` | Simulador de Apps Script y 65 pruebas automáticas: backend, formulario, panel y cartel. `npm test`. |
+| `tests/` | Simulador de Apps Script y 66 pruebas automáticas: backend, formulario, panel y cartel. `npm test`. |
 | `LEEME_montaje.md` | Montaje desde cero, y paso de la v2 a la v3. |
 | `GUIA_DEL_DIA.md` | Ensayo, operación durante el evento y qué hacer si algo falla. |
 | `MAPA_DEL_SISTEMA.md` | Recorrido de una respuesta, archivos, columnas, propiedades, parámetros y compatibilidad. |
@@ -90,7 +90,7 @@ Desde el editor de Apps Script:
 - `reintentarErrores()` — devuelve a la cola las filas que quedaron en error.
 - `procesarAhora()`, `activarMotor()`, `pausarMotor()`, `revisarDuplicados()` — ver la [guía del día](GUIA_DEL_DIA.md).
 
-Y en el repositorio, `npm test` corre las 65 pruebas automáticas contra un simulador de Apps Script y en Chromium. GitHub Actions las corre en cada envío, y las del formulario también en WebKit, el motor de Safari.
+Y en el repositorio, `npm test` corre las 66 pruebas automáticas contra un simulador de Apps Script y en Chromium. GitHub Actions las corre en cada envío, y las del formulario también en WebKit, el motor de Safari.
 
 Después de pegar una versión nueva de `Codigo.gs`, hay que publicarla: *Implementar → Gestionar implementaciones → editar (lápiz) → Versión: Nueva versión*. Así la dirección `/exec` no cambia. Si solo se guarda, el formulario sigue hablando con la versión anterior.
 

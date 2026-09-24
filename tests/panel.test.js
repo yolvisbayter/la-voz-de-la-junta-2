@@ -247,3 +247,13 @@ test('build.py: con un prototipo, arma la vista integrada; con un prototipo que 
     execFileSync('python3', [path.join(dir, 'build.py')]);
   }
 });
+
+test('fuente mal escrita: lo avisa y no muestra datos de demostración; con barra final o espacios, la acepta', async () => {
+  const a = await abrir(null, { query: '?fuente=' + encodeURIComponent('https://script.google.com/macros/s/X/ejecutar') + '&clave=k' });
+  await esperar(a.p, () => /no es válida/.test(document.querySelector('#vzEstado').textContent));
+  assert.equal(await a.p.locator('.vz-w').count(), 0, 'sin nube inventada');
+  await a.ctx.close();
+  const b = await abrir(() => ({ ok: true, voces: [voz()], motor: motorBien() }), { query: '?fuente=' + encodeURIComponent('  ' + FUENTE + '/ ') + '&clave=k&refresco=3' });
+  await esperar(b.p, () => /En vivo/.test(document.querySelector('#vzEstado').textContent));
+  await b.ctx.close();
+});

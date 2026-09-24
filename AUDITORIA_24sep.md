@@ -231,23 +231,24 @@ Pedido: rehacer y mejorar todo el sistema durante la noche, cubriendo cualquier 
 ### 11.5 Pruebas automáticas (`tests/`)
 
 - **Simulador de Apps Script**: hoja con límites reales de filas y columnas, detección de fórmulas, Drive, propiedades, caché, candado, disparadores, un Gemini falso y un reloj que se puede adelantar.
-- **65 pruebas**:
+- **66 pruebas**:
 
   | Parte | Pruebas |
   | --- | --- |
   | Backend | 33 |
   | Formulario, en Chromium con micrófono falso; y en WebKit, el motor de Safari, en GitHub Actions (11 pasan y 3 se saltan porque ese WebKit no graba audio) | 14 |
-  | Panel, en Chromium | 15 |
+  | Panel, en Chromium | 16 |
   | Cartel | 3 |
 
-- `npm test` (`tests/correr_todo.sh`): sintaxis de todo, que `panel/panel.html` esté al día con sus piezas, y las 65 pruebas. `.github/workflows/pruebas.yml` las corre en GitHub en cada envío.
+- `npm test` (`tests/correr_todo.sh`): sintaxis de todo, que `panel/panel.html` esté al día con sus piezas, y las 66 pruebas. `.github/workflows/pruebas.yml` las corre en GitHub en cada envío.
 - En el camino, las pruebas encontraron y se corrigieron:
   - el mensaje del operador que se borraba en el siguiente refresco;
   - la nube de demostración vacía;
   - el botón activo invisible en modo oscuro del panel independiente;
   - una franja sobrante al proyectar;
   - el respaldo `no-cors` del formulario, que con un solo envío a ciegas podía perder una respuesta si Google devolvía un error bajo carga: ahora reenvía en tres ciclos distintos;
-  - la barra del operador, que rearmaba sus botones en cada refresco y podía perder un clic.
+  - la barra del operador, que rearmaba sus botones en cada refresco y podía perder un clic;
+  - una `?fuente=` mal escrita en la dirección del panel, que antes mostraba datos de demostración en el proyector: ahora avisa, y acepta espacios o barra final.
 - `.nojekyll`: GitHub Pages sirve los archivos tal cual, sin pasarlos por Jekyll.
 
 ### 11.6 Documentación

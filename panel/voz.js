@@ -17,8 +17,10 @@ const VOZ_CONFIG={
      &proyectar=1                    abre en modo proyección (la pantalla completa se pide con un clic o con P)
      &refresco=20                    cada cuántos segundos se piden datos nuevos (de 3 a 300) */
 const VOZ_Q=(()=>{try{return new URLSearchParams(location.search)}catch(e){return {get:()=>null}}})();
-try{const f=VOZ_Q.get("fuente");
+let fuenteMala=false;   /* vino ?fuente= pero no es una dirección de Apps Script: se avisa, no se muestran datos de prueba */
+try{const f=String(VOZ_Q.get("fuente")||"").trim().replace(/\/+$/,"");
   if(f&&/^https:\/\/script\.google\.com\/(a\/macros\/[\w.-]+\/|macros\/)s\/[\w-]+\/(exec|dev)$/.test(f))VOZ_CONFIG.url=f;
+  else if(f)fuenteMala=true;
   const k=VOZ_Q.get("clave");if(k)VOZ_CONFIG.token=k;
   const r=Number(VOZ_Q.get("refresco"));if(r>=3&&r<=300)VOZ_CONFIG.refrescoSeg=r}catch(e){}
 
@@ -403,11 +405,12 @@ const vistasMuro=new Set();
 const hora=d=>d.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"});
 const haceTxt=ms=>{const s=Math.max(0,Math.round(ms/1000));return s<90?s+" s":Math.round(s/60)+" min"};
 
-function estado(){const e=$v("#vzEstado");e.className="vz-estado "+(modo==="clave"?"caido":modo);
+function estado(){const e=$v("#vzEstado");e.className="vz-estado "+(modo==="clave"||modo==="fuente"?"caido":modo);
   e.lastElementChild.textContent=
     modo==="cargando"?"Conectando…"+(guardadoEn?" · mostrando lo guardado a las "+hora(guardadoEn):""):
     modo==="vivo"?"En vivo · actualizado "+hora(ult):
     modo==="clave"?"Clave del panel incorrecta · revise ?clave= en la dirección":
+    modo==="fuente"?"La dirección de ?fuente= no es válida: debe ser la del Apps Script y terminar en /exec":
     modo==="caido"?"Sin conexión · mostrando lo último"+(ult?" ("+hora(ult)+")":guardadoEn?" guardado ("+hora(guardadoEn)+")":""):
     "Datos de prueba · no son respuestas reales";}
 
@@ -658,6 +661,7 @@ if(VOZ_CONFIG.url){
   setInterval(()=>{pintaOperador();respaldo()},30000);
   pantallaEncendida();
 }
+else if(fuenteMala){datos=[];modo="fuente";pinta();pintaOperador()}
 else{datos=DEMO.slice();modo="prueba";pinta();pintaOperador();
   // simula el flujo real: llega la nota de voz, se transcribe y se ubica en su palanca
   setInterval(()=>{if(ultimaDemo&&ultimaDemo.procesando){ultimaDemo.procesando=false;pinta();return}

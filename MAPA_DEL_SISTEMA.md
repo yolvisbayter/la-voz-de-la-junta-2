@@ -39,7 +39,7 @@ Qué pieza hace qué, por dónde pasa cada respuesta y dónde queda cada dato. V
 | `panel/build.py` | Arma `panel.html` y, si está el prototipo, la vista integrada | El equipo, después de cambiar el panel |
 | `panel/panel.html` | **Panel independiente, ya armado** | El operador de pantalla |
 | `carteles_qr.html` | Generador del cartel A4 con el QR | Se abre en el navegador e imprime |
-| `tests/` | Simulador de Apps Script y 65 pruebas automáticas | `npm test`, GitHub Actions |
+| `tests/` | Simulador de Apps Script y 66 pruebas automáticas | `npm test`, GitHub Actions |
 | `LEEME_montaje.md` | Montaje, y paso de la v2 a la v3 | El equipo |
 | `GUIA_DEL_DIA.md` | Ensayo, operación y qué hacer si… | Los operadores |
 | `PLAN.md` | Estado, decisiones y pendientes | El equipo |
@@ -120,7 +120,7 @@ Todas aceptan `&callback=nombre` (JSONP), que es como lee el panel.
 | `&refresco=20` | Segundos entre actualizaciones (de 3 a 300) |
 | `&vista=voz` | Solo dentro del prototipo: abre directo en la vista |
 
-Sin `fuente`, el panel muestra datos de demostración, rotulados como tales.
+Sin `fuente`, el panel muestra datos de demostración, rotulados como tales. Con una `fuente` que no es del Apps Script, avisa y no muestra nada inventado.
 
 ## Servicios de los que depende
 
