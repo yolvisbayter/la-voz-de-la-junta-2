@@ -1,0 +1,11 @@
+{
+  "name": "la-voz-de-la-junta",
+  "private": true,
+  "description": "Pruebas automáticas de La voz de la Junta (backend simulado, formulario, panel y cartel).",
+  "scripts": {
+    "test": "bash tests/correr_todo.sh"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}
